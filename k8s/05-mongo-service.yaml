@@ -1,0 +1,29 @@
+# 05-mongo-service.yaml
+# ---------------------------------------------------------------------------
+# A "headless" Service (clusterIP: None) for the Mongo StatefulSet. Instead
+# of load-balancing across replicas behind one virtual IP (what a normal
+# ClusterIP Service does), a headless Service gives each pod its own stable
+# DNS record (mongo-0.mongo.rajeshapp.svc.cluster.local). With replicas: 1
+# that distinction rarely matters in practice today, but it's the correct,
+# idiomatic pattern for StatefulSets and is what lets this manifest scale to
+# a real 3-node replica set later without changing the app's MONGO_URI host
+# ("mongo" still resolves the same way).
+#
+# app.py in every service connects using the plain hostname "mongo" inside
+# MONGO_URI (see 03-secret.yaml) - Kubernetes DNS resolves that because both
+# objects live in the same "rajeshapp" namespace.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: rajeshapp
+  labels:
+    app: mongo
+spec:
+  clusterIP: None       # <-- what makes this a headless Service
+  selector:
+    app: mongo           # matches the StatefulSet pod template's label
+  ports:
+    - port: 27017
+      targetPort: 27017
+      name: mongo

@@ -1,0 +1,113 @@
+# 20-grievance-deployment.yaml
+# ---------------------------------------------------------------------------
+# ServiceAccount, Deployment, PodDisruptionBudget for grievance-service - the
+# same production pattern as 10-auth-deployment.yaml. See that file for the
+# full reasoning behind each setting; comments here focus on what's
+# DIFFERENT for this service.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grievance-service
+  namespace: rajeshapp
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grievance-service
+  namespace: rajeshapp
+  labels:
+    app: grievance-service
+    app.kubernetes.io/part-of: rajeshapp
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: grievance-service
+  template:
+    metadata:
+      labels:
+        app: grievance-service
+    spec:
+      serviceAccountName: grievance-service
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: grievance-service
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: grievance-service
+          image: rajeshapp/grievance-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5002
+              name: http
+          env:
+            - name: PORT
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: GRIEVANCE_PORT}}
+            - name: FLASK_ENV
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: FLASK_ENV}}
+            - name: MONGO_DB
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: GRIEVANCE_MONGO_DB}}
+            - name: AUDIT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUDIT_SERVICE_URL}}
+            - name: MONGO_URI
+              valueFrom: {secretKeyRef: {name: rajeshapp-secrets, key: MONGO_URI}}
+            # Same JWT_SECRET as auth-service - this is what lets this
+            # service verify a token it never saw issued, purely by
+            # checking the signature locally. See the long comment on
+            # JWT_SECRET in 03-secret.yaml.
+            - name: JWT_SECRET
+              valueFrom: {secretKeyRef: {name: rajeshapp-secrets, key: JWT_SECRET}}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet: {path: /healthz, port: 5002}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: 5002}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet: {path: /healthz, port: 5002}
+            periodSeconds: 3
+            failureThreshold: 10
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "256Mi"}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: grievance-service-pdb
+  namespace: rajeshapp
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: grievance-service

@@ -1,0 +1,146 @@
+# 50-network-policies.yaml
+# ---------------------------------------------------------------------------
+# PRODUCTION HARDENING - did not exist in the dev manifest set at all. Up to
+# this point, "auth-service is ClusterIP-only" is a comment/convention, not
+# an enforced rule - any pod anywhere in the cluster could still reach it
+# over the pod network. NetworkPolicies make that boundary real at the
+# network layer.
+#
+# !! MINIKUBE CAVEAT, READ FIRST !!
+# NetworkPolicies are only ENFORCED if the cluster's CNI plugin implements
+# them. Minikube's default CNI (kindnet/bridge, depending on driver) does
+# NOT enforce NetworkPolicy - these objects will apply cleanly with no
+# error, but traffic will NOT actually be blocked, silently. To really test
+# this on Minikube:
+#   minikube start --cni=calico
+# On a real cluster (EKS with the AWS VPC CNI + network-policy add-on, GKE,
+# or any cluster running Calico/Cilium) these ARE enforced by default.
+#
+# Overall model: default-deny all ingress traffic in the namespace, then
+# explicitly allow only the specific pod-to-pod paths this app actually
+# needs. Egress is intentionally left unrestricted below (every pod can
+# still make outbound calls/DNS lookups freely) - locking down egress too is
+# a further hardening step, but it requires carefully allow-listing DNS
+# (UDP/TCP 53 to kube-system) and is easy to get wrong in a way that breaks
+# the whole app; left as a deliberate follow-up rather than bundled in here.
+
+# ---- 1. Default deny ALL ingress to every pod in this namespace ----------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: rajeshapp
+spec:
+  podSelector: {}          # empty selector = applies to every pod in "rajeshapp"
+  policyTypes:
+    - Ingress
+  # no `ingress:` rules at all = nothing is allowed in by default; the
+  # policies below carve out the specific exceptions.
+---
+# ---- 2. mongo: only auth/grievance/audit-service may connect -------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mongo-from-app-services
+  namespace: rajeshapp
+spec:
+  podSelector:
+    matchLabels:
+      app: mongo
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: auth-service}}
+        - podSelector: {matchLabels: {app: grievance-service}}
+        - podSelector: {matchLabels: {app: audit-service}}
+      ports:
+        - protocol: TCP
+          port: 27017
+---
+# ---- 3. auth-service: only frontend-service may connect -------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-auth-from-frontend
+  namespace: rajeshapp
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: frontend-service}}
+      ports:
+        - protocol: TCP
+          port: 5001
+---
+# ---- 4. grievance-service: only frontend-service may connect --------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grievance-from-frontend
+  namespace: rajeshapp
+spec:
+  podSelector:
+    matchLabels:
+      app: grievance-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: frontend-service}}
+      ports:
+        - protocol: TCP
+          port: 5002
+---
+# ---- 5. audit-service: frontend-service, auth-service, and                -
+#         grievance-service may all connect (each calls AUDIT_SERVICE_URL
+#         directly to log events - not just via the frontend) --------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-audit-from-app-services
+  namespace: rajeshapp
+spec:
+  podSelector:
+    matchLabels:
+      app: audit-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: frontend-service}}
+        - podSelector: {matchLabels: {app: auth-service}}
+        - podSelector: {matchLabels: {app: grievance-service}}
+      ports:
+        - protocol: TCP
+          port: 5003
+---
+# ---- 6. frontend-service: only the Ingress controller may connect --------
+# The Ingress controller (nginx) runs in its own namespace (commonly
+# "ingress-nginx"). Update the namespaceSelector label below to match
+# whatever your actual ingress controller's namespace is labeled with -
+# `kubectl get ns ingress-nginx --show-labels` after
+# `minikube addons enable ingress` to confirm the label Minikube sets.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-from-ingress-controller
+  namespace: rajeshapp
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 5000

@@ -1,0 +1,79 @@
+<!-- User directory: table of users + a role-filter select dropdown (admin only) -->
+{% extends "base.html" %}
+
+{% block title %}Users - Grievance Management System{% endblock %}
+
+{% block content %}
+<h2 class="page-title">
+    <i class="fas fa-users"></i> User Directory
+</h2>
+
+{% if session.get('role') == 'admin' %}
+<!-- ==== Role filter dropdown, admin only ====
+     A GET form keeps the chosen role in the URL (?role=admin) so the page
+     is bookmarkable/shareable and survives a refresh. -->
+<form method="GET" class="row g-2 align-items-center mb-4">
+    <div class="col-auto">
+        <label for="role" class="form-label mb-0 fw-semibold">
+            <i class="fas fa-filter"></i> Filter by role
+        </label>
+    </div>
+    <div class="col-auto">
+        <select class="form-select" id="role" name="role" onchange="this.form.submit()">
+            <option value="all" {% if selected_role == 'all' %}selected{% endif %}>All Roles</option>
+            <option value="admin" {% if selected_role == 'admin' %}selected{% endif %}>Admin</option>
+            <option value="user" {% if selected_role == 'user' %}selected{% endif %}>User</option>
+        </select>
+    </div>
+    <div class="col-auto">
+        <noscript><button type="submit" class="btn btn-outline-secondary">Apply</button></noscript>
+    </div>
+</form>
+{% endif %}
+
+{% if users and users|length > 0 %}
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Full Name</th>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Joined</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in users %}
+            <tr>
+                <td>{{ u.full_name }}</td>
+                <td>{{ u.username }}</td>
+                <td>{{ u.email }}</td>
+                <td>
+                    {% if u.role == 'admin' %}
+                        <span class="badge bg-dark">Admin</span>
+                    {% else %}
+                        <span class="badge bg-secondary">User</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if u.status == 'active' %}
+                        <span class="badge-status badge-resolved">Active</span>
+                    {% else %}
+                        <span class="badge-status badge-pending">Disabled</span>
+                    {% endif %}
+                </td>
+                <td>{{ u.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-5 text-muted">
+    <i class="fas fa-user-slash fa-3x mb-3"></i>
+    <p>No users match this filter.</p>
+</div>
+{% endif %}
+{% endblock %}

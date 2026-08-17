@@ -1,0 +1,65 @@
+<!-- Form used to file a new grievance -->
+{% extends "base.html" %}
+
+{% block title %}New Grievance - Grievance Management System{% endblock %}
+
+{% block content %}
+<h2 class="page-title">
+    <i class="fas fa-plus-circle"></i> File a New Grievance
+</h2>
+
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <form method="POST" novalidate>
+            <!-- Title -->
+            <div class="mb-3">
+                <label for="title" class="form-label">
+                    <i class="fas fa-heading"></i> Title
+                </label>
+                <input type="text" class="form-control" id="title" name="title"
+                       placeholder="Short summary of the issue" required maxlength="150">
+            </div>
+
+            <!-- Category: fixed set of values, so a <select> dropdown is the
+                 correct control here (prevents free-text typos in the DB) -->
+            <div class="mb-3">
+                <label for="category" class="form-label">
+                    <i class="fas fa-tags"></i> Category
+                </label>
+                <select class="form-select" id="category" name="category" required>
+                    <option value="" selected disabled>Choose a category&hellip;</option>
+                    {% for c in categories %}
+                    <option value="{{ c }}">{{ c }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Priority dropdown -->
+            <div class="mb-3">
+                <label for="priority" class="form-label">
+                    <i class="fas fa-exclamation-circle"></i> Priority
+                </label>
+                <select class="form-select" id="priority" name="priority">
+                    {% for p in priorities %}
+                    <option value="{{ p }}" {% if p == 'Medium' %}selected{% endif %}>{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Description -->
+            <div class="mb-4">
+                <label for="description" class="form-label">
+                    <i class="fas fa-align-left"></i> Description
+                </label>
+                <textarea class="form-control" id="description" name="description" rows="5"
+                          placeholder="Describe the issue in detail..." required></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary px-4">
+                <i class="fas fa-paper-plane"></i> Submit Grievance
+            </button>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary px-4">Cancel</a>
+        </form>
+    </div>
+</div>
+{% endblock %}

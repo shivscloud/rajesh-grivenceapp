@@ -1,0 +1,53 @@
+# 60-ingress.yaml
+# ---------------------------------------------------------------------------
+# The single public entry point for the whole app. Notice this Ingress has
+# exactly ONE backend: frontend-service. It does NOT route directly to
+# auth-service/grievance-service/audit-service - reinforcing the same
+# boundary as their NetworkPolicies: those three are never meant to be
+# reachable from outside the cluster, Ingress included.
+#
+# TLS: commented out below because it depends on infrastructure this repo
+# doesn't control (a DNS record pointing at your Ingress controller's
+# external IP, and cert-manager installed with a ClusterIssuer configured
+# for Let's Encrypt or your CA of choice). Uncomment once both exist - until
+# then this Ingress serves plain HTTP, which is fine for Minikube testing
+# but NOT how you'd leave a real public endpoint.
+#
+# ---- Minikube testing steps -----------------------------------------------
+#   1. minikube addons enable ingress
+#   2. kubectl apply -f k8s/60-ingress.yaml
+#   3. echo "$(minikube ip) rajeshapp.local" | sudo tee -a /etc/hosts
+#   4. open http://rajeshapp.local in a browser
+# ---- Real cluster (e.g. EKS) ------------------------------------------
+#   1. Install an Ingress controller (ingress-nginx, or the AWS Load
+#      Balancer Controller for a native ALB) - this is cluster
+#      infrastructure, not part of this app's manifests.
+#   2. Point your real DNS record (rajeshapp.example.com) at the
+#      controller's external LoadBalancer address.
+#   3. Install cert-manager, uncomment the tls: block and the
+#      cert-manager.io/cluster-issuer annotation below.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rajeshapp-ingress
+  namespace: rajeshapp
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"   # force HTTP -> HTTPS once TLS is live
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"  # auto-provision/renew the cert below
+spec:
+  rules:
+    - host: rajeshapp.local          # swap to your real domain (rajeshapp.example.com) in production
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 5000
+  # tls:
+  #   - hosts:
+  #       - rajeshapp.example.com
+  #     secretName: rajeshapp-tls     # cert-manager writes the issued cert/key here automatically

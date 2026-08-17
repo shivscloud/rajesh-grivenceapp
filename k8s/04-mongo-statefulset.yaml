@@ -1,0 +1,137 @@
+# 04-mongo-statefulset.yaml
+# ---------------------------------------------------------------------------
+# MongoDB runs as a StatefulSet, not a Deployment, because it is stateful: it
+# needs (a) a stable network identity and (b) a PersistentVolume that
+# survives pod restarts/rescheduling. A Deployment's pods are interchangeable
+# and their storage would be lost on every reschedule - exactly wrong for a
+# database.
+#
+# PRODUCTION NOTE (be explicit about what this is NOT): replicas is 1 here,
+# which is fine for Minikube testing but is NOT a production-grade database
+# topology - a single mongod has no automatic failover and this PVC is a
+# single point of failure. A real production deployment should run either:
+#   - a proper 3-node Mongo replica set (StatefulSet with replicas: 3 +
+#     replica-set init logic), or
+#   - a managed database (MongoDB Atlas / AWS DocumentDB) so you're not
+#     operating replication and backups yourself.
+# This file is written so flipping to a real replica set later only touches
+# `replicas:` and the mongod startup command - the Service, Secret wiring,
+# and app-facing MONGO_URI shape all stay the same.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: rajeshapp
+  labels:
+    app: mongo
+    app.kubernetes.io/part-of: rajeshapp
+spec:
+  serviceName: mongo   # must match the headless Service name in 05-mongo-service.yaml
+  replicas: 1
+  # podManagementPolicy: OrderedReady (the default) starts/stops pods one at
+  # a time in order (mongo-0, mongo-1, ...) - the correct policy for a
+  # database where later replicas may need to initial-sync from earlier
+  # ones. Left implicit/default here on purpose - explicit for clarity if
+  # you scale replicas up later.
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      # Pod-level securityContext: fsGroup makes the mounted volume
+      # (mongo-data) group-writable by GID 999, which is the "mongodb"
+      # group baked into the official mongo:7.0 image - so mongod (which
+      # already runs as a non-root user inside that image) can actually
+      # write to /data/db without needing root.
+      securityContext:
+        fsGroup: 999
+        runAsNonRoot: true
+      containers:
+        - name: mongo
+          image: mongo:7.0        # pinned tag: reproducible pulls across every node
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 27017
+              name: mongo
+          env:
+            # Sourced from the Secret so the root password is never written
+            # in plaintext into this manifest.
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: rajeshapp-secrets
+                  key: MONGO_ROOT_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rajeshapp-secrets
+                  key: MONGO_ROOT_PASSWORD
+          volumeMounts:
+            # Mongo's own on-disk data files - matches what
+            # volumeClaimTemplates below provisions.
+            - name: mongo-data
+              mountPath: /data/db
+          # Container-level securityContext: defense in depth on top of the
+          # pod-level settings above. allowPrivilegeEscalation:false and
+          # dropping ALL capabilities shrink what a compromised mongod
+          # process could do even if it were exploited.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # readinessProbe: is Mongo ready to accept connections right now?
+          # A pod failing this is pulled out of the headless Service's DNS
+          # rotation but NOT restarted.
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # livenessProbe: is the mongod process itself stuck/dead? A pod
+          # failing this IS restarted by Kubernetes.
+          livenessProbe:
+            exec:
+              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            # Sized for a small production workload; raise these if you see
+            # OOMKilled events or WiredTiger cache pressure under real load.
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      # PRODUCTION NOTE: if/when replicas > 1, add a podAntiAffinity rule
+      # here (preferredDuringSchedulingIgnoredDuringExecution on
+      # topologyKey: kubernetes.io/hostname) so replicas land on different
+      # nodes and one node failure can't take down the whole replica set.
+      # Omitted while replicas: 1 since there's nothing to spread yet.
+  # volumeClaimTemplates: causes Kubernetes to auto-create one
+  # PersistentVolumeClaim PER POD (mongo-data-mongo-0, etc.), bound to that
+  # pod across restarts - this is what gives the database durable storage.
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # PRODUCTION NOTE: pin storageClassName explicitly on a real cluster
+        # (e.g. "gp3" on EKS) instead of relying on the cluster default, so
+        # you always get the disk type/IOPS profile you intend for a
+        # database workload. Left unset here so Minikube's default
+        # StorageClass auto-provisions it for local testing.
+        # storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi   # production sizing; bump further based on real data volume

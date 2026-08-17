@@ -1,0 +1,31 @@
+# 41-frontend-service.yaml
+# ---------------------------------------------------------------------------
+# type: ClusterIP - PRODUCTION CHANGE from the original Minikube-only dev
+# manifest, which used NodePort. On a real cluster you don't punch a raw
+# node-port hole for public traffic; instead an Ingress controller
+# (60-ingress.yaml) sits in front and this Service stays internal, exactly
+# like auth/grievance/audit. The Ingress controller itself is what's exposed
+# externally (typically via a cloud LoadBalancer), giving you one single,
+# TLS-terminated, host/path-routed entry point for the whole cluster instead
+# of one open port per app.
+#
+# STILL TESTABLE ON MINIKUBE WITHOUT AN INGRESS: use port-forward exactly
+# like every internal service:
+#   kubectl -n rajeshapp port-forward svc/frontend-service 5000:5000
+# then open http://localhost:5000 - or enable the Ingress path (see
+# 60-ingress.yaml's comment block) for a closer-to-production test.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: rajeshapp
+  labels:
+    app: frontend-service
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend-service
+  ports:
+    - port: 5000
+      targetPort: 5000
+      name: http

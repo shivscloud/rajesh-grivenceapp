@@ -1,0 +1,49 @@
+<!-- Profile page: view + edit the logged-in user's own details -->
+{% extends "base.html" %}
+
+{% block title %}My Profile - Grievance Management System{% endblock %}
+
+{% block content %}
+<h2 class="page-title">
+    <i class="fas fa-id-card"></i> My Profile
+</h2>
+
+{% if user %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <form method="POST" novalidate>
+            <!-- Read-only identity fields -->
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input type="text" class="form-control" value="{{ user.username }}" disabled>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input type="email" class="form-control" value="{{ user.email }}" disabled>
+            </div>
+
+            <!-- Editable fields -->
+            <div class="mb-3">
+                <label for="full_name" class="form-label">
+                    <i class="fas fa-user"></i> Full Name
+                </label>
+                <input type="text" class="form-control" id="full_name" name="full_name"
+                       value="{{ user.full_name }}" required>
+            </div>
+            <div class="mb-4">
+                <label for="phone" class="form-label">
+                    <i class="fas fa-phone"></i> Phone
+                </label>
+                <input type="text" class="form-control" id="phone" name="phone" value="{{ user.phone or '' }}">
+            </div>
+
+            <button type="submit" class="btn btn-primary px-4">
+                <i class="fas fa-save"></i> Save Changes
+            </button>
+        </form>
+    </div>
+</div>
+{% else %}
+<p class="text-muted">Profile information is unavailable right now.</p>
+{% endif %}
+{% endblock %}

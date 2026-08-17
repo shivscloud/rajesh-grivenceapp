@@ -1,0 +1,155 @@
+{{- range $name, $svc := .Values.services }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: {{ $name }}
+    app.kubernetes.io/part-of: rajeshapp
+spec:
+  replicas: {{ $svc.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {app: {{ $name }}}
+  template:
+    metadata:
+      labels: {app: {{ $name }}}
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector: {matchLabels: {app: {{ $name }}}}
+                topologyKey: kubernetes.io/hostname
+      # ------------------------------------------------------------------
+      # WHY THIS EXISTS: `helm install` creates the mongo StatefulSet and
+      # every service's Deployment at (roughly) the same time - unlike the
+      # old deploy-minikube.sh, which kubectl-applied Mongo first and
+      # waited for its rollout before touching any app Deployment. This
+      # app's own code only opens its MongoClient ONCE at container
+      # startup (see app.py) and never retries - so if the main container
+      # starts even a couple seconds before mongod is accepting
+      # connections, `db` stays None forever and /readyz fails permanently
+      # (the pod goes Running but 0/1 Ready and never recovers on its own,
+      # exactly what you just saw). An initContainer is the standard
+      # Kubernetes-native fix: it blocks the pod in "Init" phase, retrying
+      # a plain TCP connection to mongo:27017 every 2s, and only lets the
+      # main container start once that connection actually succeeds - so
+      # by the time app.py's MongoClient() runs, Mongo is guaranteed to
+      # already be accepting connections, regardless of install order.
+      {{- if ne $name "frontend-service" }}
+      initContainers:
+        - name: wait-for-mongo
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z -w2 mongo.{{ $.Values.namespace }}.svc.cluster.local 27017; do
+                echo "waiting for mongo..."; sleep 2;
+              done
+              echo "mongo is up"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+      {{- else }}
+      # frontend-service has no database of its own - its critical
+      # dependency is auth-service (without it, nobody can log in), which
+      # is exactly what its own /readyz already checks. Wait for the same
+      # thing here, before the main container even starts.
+      initContainers:
+        - name: wait-for-auth-service
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z -w2 auth-service.{{ $.Values.namespace }}.svc.cluster.local 5001; do
+                echo "waiting for auth-service..."; sleep 2;
+              done
+              echo "auth-service is up"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.image.registry }}/{{ $name }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ $svc.port }}
+              name: http
+          env:
+            - name: PORT
+              value: {{ $svc.port | quote }}
+            - name: FLASK_ENV
+              valueFrom: {configMapKeyRef: {name: {{ $.Release.Name }}-config, key: FLASK_ENV}}
+          {{- if eq $name "frontend-service" }}
+            - name: SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ $.Release.Name }}-secrets, key: SECRET_KEY}}
+            - name: AUTH_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: {{ $.Release.Name }}-config, key: AUTH_SERVICE_URL}}
+            - name: GRIEVANCE_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: {{ $.Release.Name }}-config, key: GRIEVANCE_SERVICE_URL}}
+            - name: AUDIT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: {{ $.Release.Name }}-config, key: AUDIT_SERVICE_URL}}
+          {{- else }}
+            - name: MONGO_DB
+              valueFrom: {configMapKeyRef: {name: {{ $.Release.Name }}-config, key: {{ upper (replace "-" "_" $name) }}_MONGO_DB}}
+            - name: MONGO_URI
+              valueFrom: {secretKeyRef: {name: {{ $.Release.Name }}-secrets, key: MONGO_URI}}
+            - name: JWT_SECRET
+              valueFrom: {secretKeyRef: {name: {{ $.Release.Name }}-secrets, key: JWT_SECRET}}
+            - name: JWT_EXPIRY_HOURS
+              valueFrom: {configMapKeyRef: {name: {{ $.Release.Name }}-config, key: JWT_EXPIRY_HOURS}}
+            {{- if ne $name "audit-service" }}
+            - name: AUDIT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: {{ $.Release.Name }}-config, key: AUDIT_SERVICE_URL}}
+            {{- end }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet: {path: /healthz, port: {{ $svc.port }}}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: {path: /readyz, port: {{ $svc.port }}}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          startupProbe:
+            httpGet: {path: /healthz, port: {{ $svc.port }}}
+            periodSeconds: 3
+            failureThreshold: 10
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-pdb
+  namespace: {{ $.Values.namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: {{ $name }}}
+---
+{{- end }}

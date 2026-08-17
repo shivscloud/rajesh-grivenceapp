@@ -1,0 +1,157 @@
+# 10-auth-deployment.yaml
+# ---------------------------------------------------------------------------
+# Three objects in this one file, in order: ServiceAccount, Deployment,
+# PodDisruptionBudget. Kept together because they all describe "how
+# auth-service runs" - splitting them across separate numbered files added
+# no clarity in practice, just more files to keep in sync.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auth-service
+  namespace: rajeshapp
+# automountServiceAccountToken: false - PRODUCTION HARDENING. By default
+# every pod gets a token mounted at /var/run/secrets/kubernetes.io/... that
+# can call the Kubernetes API as this ServiceAccount. auth-service never
+# calls the K8s API itself, so that token is pure unnecessary attack
+# surface if the pod is ever compromised - disable it.
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: rajeshapp
+  labels:
+    app: auth-service
+    app.kubernetes.io/part-of: rajeshapp
+spec:
+  replicas: 2   # >1 so the Service can keep routing traffic during a rolling update
+  # PRODUCTION NOTE: pair this with the HorizontalPodAutoscaler you'll add
+  # once you're on a real cluster with metrics-server/Prometheus Adapter
+  # installed - `replicas` here becomes the *minimum* floor, not the fixed
+  # count, once an HPA is attached. Left as a plain fixed replica count for
+  # Minikube testing.
+  strategy:
+    # RollingUpdate (the default type, spelled out here for clarity): pods
+    # are replaced gradually, never all at once.
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1          # allowed to briefly run 1 extra pod above `replicas` during a rollout
+      maxUnavailable: 0    # never drop below `replicas` healthy pods during a rollout - zero-downtime deploys
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      serviceAccountName: auth-service
+      # Spread the 2 replicas across different nodes where possible, so a
+      # single node failure can't take down every auth-service pod at once.
+      # "preferred" (soft), not "required" (hard) - on a 1-node Minikube
+      # cluster a hard rule would leave the 2nd replica permanently
+      # Pending; "preferred" degrades gracefully to "same node" there while
+      # still doing the right thing on a real multi-node cluster.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: auth-service
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: auth-service
+          # Built with: docker build -t <registry>/auth-service:v1 ./auth-service
+          # then pushed to your registry (ECR/Docker Hub/GHCR) for a real
+          # cluster to pull. For Minikube testing, `deploy-minikube.sh` loads
+          # this image straight into Minikube's node with `minikube image
+          # load`, so no registry push is required locally.
+          image: rajeshapp/auth-service:v1
+          # IfNotPresent (not "Never"): on a real cluster this must pull
+          # from a real registry. `minikube image load` (used by
+          # deploy-minikube.sh) pre-loads the image so IfNotPresent finds it
+          # already present locally and skips a network pull on Minikube too.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5001
+              name: http
+          env:
+            - name: PORT
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUTH_PORT}}
+            - name: FLASK_ENV
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: FLASK_ENV}}
+            - name: MONGO_DB
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUTH_MONGO_DB}}
+            - name: JWT_EXPIRY_HOURS
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: JWT_EXPIRY_HOURS}}
+            - name: AUDIT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUDIT_SERVICE_URL}}
+            - name: MONGO_URI
+              valueFrom: {secretKeyRef: {name: rajeshapp-secrets, key: MONGO_URI}}
+            - name: JWT_SECRET
+              valueFrom: {secretKeyRef: {name: rajeshapp-secrets, key: JWT_SECRET}}
+          # securityContext: PRODUCTION HARDENING, matches the non-root user
+          # the Dockerfile already creates (uid 1000, "appuser").
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true    # Flask/Gunicorn need a writable /tmp - see volume below
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Paired with readOnlyRootFilesystem above: everything except
+            # /tmp is read-only inside the container, but Gunicorn/Python
+            # still need somewhere writable for temp files.
+            - name: tmp
+              mountPath: /tmp
+          # Liveness: is the process stuck? (never touches Mongo - see the
+          # reasoning in app.py's /healthz handler).
+          livenessProbe:
+            httpGet: {path: /healthz, port: 5001}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Readiness: can this pod actually serve right now? (does touch
+          # Mongo). A pod failing this is pulled out of the Service's
+          # routing rotation but NOT restarted.
+          readinessProbe:
+            httpGet: {path: /readyz, port: 5001}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # startupProbe: gives slow-starting pods (cold Gunicorn boot, first
+          # Mongo connection) up to 30s (10 x 3s) before liveness starts
+          # counting failures - prevents Kubernetes from killing a pod that
+          # just needed a bit longer to boot on first start.
+          startupProbe:
+            httpGet: {path: /healthz, port: 5001}
+            periodSeconds: 3
+            failureThreshold: 10
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "256Mi"}
+      volumes:
+        - name: tmp
+          emptyDir: {}   # in-memory/ephemeral scratch space, wiped on pod restart - fine for temp files
+---
+# PodDisruptionBudget: caps how many auth-service pods VOLUNTARY cluster
+# operations (node drains during upgrades, `kubectl drain`, cluster
+# autoscaler scale-down) are allowed to take down at once. Doesn't protect
+# against crashes/failures - only against Kubernetes itself being too
+# aggressive during planned maintenance.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: auth-service-pdb
+  namespace: rajeshapp
+spec:
+  minAvailable: 1   # with replicas: 2, at least 1 must stay up during a drain
+  selector:
+    matchLabels:
+      app: auth-service

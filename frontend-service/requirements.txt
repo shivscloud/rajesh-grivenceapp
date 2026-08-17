@@ -1,0 +1,13 @@
+# =====================================================================
+# frontend-service/requirements.txt — pinned for reproducible container builds
+# =====================================================================
+# Note what's ABSENT compared to the other services: no pymongo (this
+# service never touches a database) and no Werkzeug password helpers
+# (it never sees a plaintext password — that's auth-service's job).
+Flask==2.3.2
+gunicorn==21.2.0
+# requests: the workhorse of this whole service — every route is really
+# just "collect a form/URL param, call one of the three backend APIs,
+# render a template with the JSON that comes back."
+requests==2.31.0
+python-dotenv==1.0.0

@@ -1,0 +1,11 @@
+# =====================================================================
+# audit-service/requirements.txt — pinned for reproducible container builds
+# =====================================================================
+Flask==2.3.2
+gunicorn==21.2.0
+pymongo==4.5.0
+# PyJWT: only needed to verify the caller on the admin-only GET /api/logs
+# read path — the internal POST /api/logs write path is unauthenticated
+# on purpose (see the comment above create_log() in app.py).
+PyJWT==2.8.0
+python-dotenv==1.0.0

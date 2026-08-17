@@ -1,0 +1,98 @@
+# 30-audit-deployment.yaml
+# ---------------------------------------------------------------------------
+# ServiceAccount + Deployment for audit-service. No PodDisruptionBudget here
+# on purpose: with replicas: 1, minAvailable: 1 on a PDB would mean
+# Kubernetes could NEVER voluntarily evict this pod (0 pods could ever be
+# unavailable), which actively blocks legitimate node drains/upgrades
+# instead of protecting availability - not what we want for a single
+# non-critical replica. If you raise replicas to 2+ later, add a PDB the
+# same way 10-auth-deployment.yaml and 20-grievance-deployment.yaml do.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: audit-service
+  namespace: rajeshapp
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-service
+  namespace: rajeshapp
+  labels:
+    app: audit-service
+    app.kubernetes.io/part-of: rajeshapp
+spec:
+  # Only 1 replica: this is the lowest-traffic, least-critical service in
+  # the system (writes are fire-and-forget, reads are admin-only) - a
+  # deliberate example that not every service needs the same replica count.
+  # Bump this independently of the others any time, without touching
+  # auth-service or grievance-service at all.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      # With only 1 replica, maxUnavailable: 0 still gives a zero-downtime
+      # rollout - Kubernetes brings the new pod up (maxSurge: 1) BEFORE
+      # tearing down the old one, rather than the reverse.
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: audit-service
+  template:
+    metadata:
+      labels:
+        app: audit-service
+    spec:
+      serviceAccountName: audit-service
+      containers:
+        - name: audit-service
+          image: rajeshapp/audit-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5003
+              name: http
+          env:
+            - name: PORT
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUDIT_PORT}}
+            - name: FLASK_ENV
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: FLASK_ENV}}
+            - name: MONGO_DB
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUDIT_MONGO_DB}}
+            - name: MONGO_URI
+              valueFrom: {secretKeyRef: {name: rajeshapp-secrets, key: MONGO_URI}}
+            - name: JWT_SECRET
+              valueFrom: {secretKeyRef: {name: rajeshapp-secrets, key: JWT_SECRET}}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet: {path: /healthz, port: 5003}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: 5003}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet: {path: /healthz, port: 5003}
+            periodSeconds: 3
+            failureThreshold: 10
+          resources:
+            requests: {cpu: "50m", memory: "128Mi"}
+            limits: {cpu: "250m", memory: "256Mi"}
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,50 @@
+# 01-resourcequota-limitrange.yaml
+# ---------------------------------------------------------------------------
+# PRODUCTION HARDENING - neither object existed in the original dev manifest
+# set. Both are namespace-scoped guardrails against a single misbehaving
+# Deployment (bad rollout, memory leak, runaway HPA) starving every other
+# workload on the same node/cluster.
+#
+# ResourceQuota: a hard ceiling on TOTAL resources this namespace can
+# consume, summed across every pod inside it. If the sum of all Deployments'
+# requests/limits would exceed this, the API server REJECTS the new pod at
+# creation time - a very clear, very early failure signal instead of an
+# out-of-memory node meltdown discovered later.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rajeshapp-quota
+  namespace: rajeshapp
+spec:
+  hard:
+    requests.cpu: "2"          # sum of every pod's cpu request must stay <= 2 cores
+    requests.memory: "2Gi"     # sum of every pod's memory request must stay <= 2Gi
+    limits.cpu: "4"            # sum of every pod's cpu limit must stay <= 4 cores
+    limits.memory: "4Gi"       # sum of every pod's memory limit must stay <= 4Gi
+    pods: "20"                 # hard cap on total pod count in this namespace
+    persistentvolumeclaims: "5"
+---
+# LimitRange: DEFAULT requests/limits applied automatically to any container
+# in this namespace that doesn't specify its own (a safety net - every
+# Deployment below DOES set explicit resources, but this protects against
+# someone adding a new container later and forgetting to).
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: rajeshapp-limits
+  namespace: rajeshapp
+spec:
+  limits:
+    - type: Container
+      defaultRequest:            # applied if a container has no `requests:`
+        cpu: "50m"
+        memory: "128Mi"
+      default:                   # applied if a container has no `limits:`
+        cpu: "250m"
+        memory: "256Mi"
+      max:                       # no single container may ever request more than this
+        cpu: "1"
+        memory: "1Gi"
+      min:                       # no single container may request less than this
+        cpu: "10m"
+        memory: "32Mi"

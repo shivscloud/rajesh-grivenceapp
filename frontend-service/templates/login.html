@@ -1,0 +1,135 @@
+<!-- Login template for user authentication -->
+{% extends "base.html" %}
+
+{% block title %}Login - Grievance Management System{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center" style="margin-top: 50px;">
+    <div class="col-md-6 col-lg-5">
+        <!-- Login card with shadow and rounded corners -->
+        <div class="card" style="box-shadow: 0 8px 16px rgba(0,0,0,0.1); border-radius: 12px; border: none;">
+            <div class="card-body p-5">
+                <!-- Header with icon -->
+                <div class="text-center mb-4">
+                    <i class="fas fa-sign-in-alt" style="font-size: 3rem; color: #3498db;"></i>
+                    <h3 class="mt-3" style="color: #2c3e50; font-weight: 700;">Sign In</h3>
+                    <p class="text-muted">Access your grievance account</p>
+                </div>
+
+                <!-- Error messages -->
+                {% if error %}
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    <i class="fas fa-exclamation-triangle"></i> {{ error }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endif %}
+
+                <!-- Login form -->
+                <form method="POST" novalidate>
+                    <!-- Email field -->
+                    <div class="mb-3">
+                        <label for="email" class="form-label">
+                            <i class="fas fa-envelope"></i> Email Address
+                        </label>
+                        <input type="email" class="form-control" id="email" name="email" 
+                               placeholder="Enter your email" required style="border-radius: 6px;">
+                        <small class="text-muted">We'll never share your email with anyone else.</small>
+                    </div>
+
+                    <!-- Password field -->
+                    <div class="mb-3">
+                        <label for="password" class="form-label">
+                            <i class="fas fa-lock"></i> Password
+                        </label>
+                        <input type="password" class="form-control" id="password" name="password" 
+                               placeholder="Enter your password" required style="border-radius: 6px;">
+                        <small class="text-muted">Minimum 6 characters required</small>
+                    </div>
+
+                    <!-- Remember me checkbox -->
+                    <div class="mb-4 form-check">
+                        <input type="checkbox" class="form-check-input" id="rememberMe" name="rememberMe">
+                        <label class="form-check-label" for="rememberMe">
+                            Remember me
+                        </label>
+                    </div>
+
+                    <!-- Submit button -->
+                    <button type="submit" class="btn btn-primary w-100 py-2 mb-3" style="border-radius: 6px; font-weight: 600;">
+                        <i class="fas fa-sign-in-alt"></i> Sign In
+                    </button>
+                </form>
+
+                <!-- Divider -->
+                <div style="text-align: center; color: #999; margin: 20px 0;">
+                    <span>Don't have an account?</span>
+                </div>
+
+                <!-- Register link -->
+                <a href="/register" class="btn btn-outline-secondary w-100 py-2" style="border-radius: 6px; font-weight: 600;">
+                    <i class="fas fa-user-plus"></i> Create Account
+                </a>
+            </div>
+        </div>
+
+        <!-- Information section below login card -->
+        <div class="mt-4 text-center text-white">
+            <p>
+                <i class="fas fa-info-circle"></i> 
+                This is a secure platform for managing and tracking grievances.
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- Custom CSS for login page -->
+<style>
+    /* Override container styling for login -->
+    .container-main {
+        background: transparent;
+        box-shadow: none;
+        padding: 0;
+    }
+
+    /* Card styling for login */
+    .card {
+        background: white;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 12px 24px rgba(0,0,0,0.15) !important;
+    }
+
+    /* Form control focus effect */
+    .form-control {
+        border: 1px solid #dee2e6;
+        transition: all 0.3s ease;
+    }
+
+    .form-control:focus {
+        border-color: #3498db;
+        box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+    }
+
+    /* Button hover effect */
+    .btn-primary {
+        background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+        border: none;
+        transition: all 0.3s ease;
+    }
+
+    .btn-primary:hover {
+        background: linear-gradient(135deg, #2980b9 0%, #1f618d 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+    }
+
+    .btn-outline-secondary:hover {
+        background-color: #6c757d;
+        border-color: #6c757d;
+        color: white !important;
+    }
+</style>
+{% endblock %}

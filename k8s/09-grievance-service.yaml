@@ -1,0 +1,20 @@
+# 21-grievance-service.yaml
+# ---------------------------------------------------------------------------
+# ClusterIP, same reasoning as 11-auth-service.yaml: only frontend-service
+# (and no one outside the cluster) ever needs to reach this. Backed by the
+# same NetworkPolicy pattern in 50-network-policies.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: grievance-service
+  namespace: rajeshapp
+  labels:
+    app: grievance-service
+spec:
+  type: ClusterIP
+  selector:
+    app: grievance-service
+  ports:
+    - port: 5002
+      targetPort: 5002
+      name: http

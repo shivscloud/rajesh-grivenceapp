@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Docker
+*.log
+
+# Kubernetes
+*.secret.yaml
+*-secret.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# IDE
+.vscode/
+.idea/
+
+# Windows metadata
+*:Zone.Identifier
+
+# OS files
+.DS_Store
+Thumbs.db

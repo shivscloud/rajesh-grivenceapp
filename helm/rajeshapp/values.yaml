@@ -1,0 +1,109 @@
+# values.yaml
+# ---------------------------------------------------------------------------
+# Every value the raw k8s/*.yaml files hardcoded now lives here instead.
+# `helm install` renders the templates/ with these values; `--set` or a
+# second values file (values-prod.yaml, values-staging.yaml) overrides them
+# per environment without ever touching the templates themselves.
+
+namespace: rajeshapp
+
+image:
+  registry: rajeshapp          # swap to your ECR/Docker Hub/GHCR registry
+  pullPolicy: IfNotPresent
+  tag: v1
+
+config:
+  flaskEnv: production
+  jwtExpiryHours: "24"
+  gunicornWorkers: "3"
+  gunicornTimeout: "30"
+
+# Never put real values here for a shared/public chart — see
+# "Secrets in Helm" in the README this chart ships with. Fine for
+# Minikube/learning; overridden with --set or a private values file
+# for anything real.
+secrets:
+  secretKey: "dev-secret-key-change-in-production"
+  jwtSecret: "dev-jwt-secret-change-in-production"
+  mongoUser: "root"
+  mongoPassword: "example"
+
+mongo:
+  image: "mongo:7.0"
+  storage: 10Gi
+  storageClassName: ""     # leave blank to use the cluster default
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+# One entry per microservice. The Deployment + Service templates loop over
+# this map with `range $name, $svc := .Values.services`, so adding a 5th
+# service later means adding one block here — not a new template file.
+services:
+  auth-service:
+    port: 5001
+    mongoDb: auth_db
+    replicas: 2
+    serviceType: ClusterIP
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilization: 70
+
+  grievance-service:
+    port: 5002
+    mongoDb: grievance_db
+    replicas: 2
+    serviceType: ClusterIP
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilization: 70
+
+  audit-service:
+    port: 5003
+    mongoDb: audit_db
+    replicas: 1
+    serviceType: ClusterIP
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 3
+      targetCPUUtilization: 70
+
+  frontend-service:
+    port: 5000
+    mongoDb: ""              # frontend-service owns no database
+    replicas: 2
+    serviceType: NodePort
+    nodePort: 30080
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPUUtilization: 70
+
+ingress:
+  enabled: false            # flip on once you have an ingress controller installed
+  className: nginx
+  host: rajeshapp.local
+  tls:
+    enabled: false
+    secretName: rajeshapp-tls
+
+networkPolicies:
+  enabled: true

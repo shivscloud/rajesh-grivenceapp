@@ -1,0 +1,83 @@
+<!-- Grievance list: table + a status-filter select dropdown -->
+{% extends "base.html" %}
+
+{% block title %}Grievances - Grievance Management System{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
+    <h2 class="page-title mb-0" style="border-bottom: none; padding-bottom: 0;">
+        <i class="fas fa-list"></i>
+        {% if session.get('role') == 'admin' %}All Grievances{% else %}My Grievances{% endif %}
+    </h2>
+    <a href="{{ url_for('create_grievance') }}" class="btn btn-primary">
+        <i class="fas fa-plus"></i> New Grievance
+    </a>
+</div>
+
+<!-- ==== Status filter: a GET form so the selection is a shareable/bookmarkable
+     URL (?status=open) and reloading the page keeps the filter applied ==== -->
+<form method="GET" class="row g-2 align-items-center mb-4">
+    <div class="col-auto">
+        <label for="status" class="form-label mb-0 fw-semibold">
+            <i class="fas fa-filter"></i> Filter by status
+        </label>
+    </div>
+    <div class="col-auto">
+        <select class="form-select" id="status" name="status" onchange="this.form.submit()">
+            <option value="all" {% if selected_status == 'all' %}selected{% endif %}>All Statuses</option>
+            <option value="open" {% if selected_status == 'open' %}selected{% endif %}>Open</option>
+            <option value="in_progress" {% if selected_status == 'in_progress' %}selected{% endif %}>In Progress</option>
+            <option value="resolved" {% if selected_status == 'resolved' %}selected{% endif %}>Resolved</option>
+            <option value="closed" {% if selected_status == 'closed' %}selected{% endif %}>Closed</option>
+        </select>
+    </div>
+    <!-- Fallback submit button for users with JS disabled (onchange auto-submit won't fire) -->
+    <div class="col-auto">
+        <noscript><button type="submit" class="btn btn-outline-secondary">Apply</button></noscript>
+    </div>
+</form>
+
+{% if grievances and grievances|length > 0 %}
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Category</th>
+                <th>Priority</th>
+                <th>Status</th>
+                {% if session.get('role') == 'admin' %}<th>Filed By</th>{% endif %}
+                <th>Created</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for g in grievances %}
+            <tr>
+                <td>{{ g.title }}</td>
+                <td>{{ g.category }}</td>
+                <td>{{ g.priority }}</td>
+                <td>
+                    <span class="badge-status badge-{{ 'resolved' if g.status == 'resolved' else ('pending' if g.status == 'in_progress' else 'open') }}">
+                        {{ g.status | replace('_', ' ') | title }}
+                    </span>
+                </td>
+                {% if session.get('role') == 'admin' %}<td><code>{{ g.user_id[:8] }}&hellip;</code></td>{% endif %}
+                <td>{{ g.created_at }}</td>
+                <td class="text-end">
+                    <a href="{{ url_for('grievance_detail', grievance_id=g._id) }}" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-eye"></i> View
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-5 text-muted">
+    <i class="fas fa-folder-open fa-3x mb-3"></i>
+    <p>No grievances match this filter.</p>
+</div>
+{% endif %}
+{% endblock %}

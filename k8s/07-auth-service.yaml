@@ -1,0 +1,35 @@
+# 11-auth-service.yaml
+# ---------------------------------------------------------------------------
+# type: ClusterIP (the default - spelled out here so the contrast with
+# frontend-service's Ingress-only exposure in 42-frontend-service.yaml is
+# obvious side-by-side).
+#
+# ClusterIP gives this Service a stable virtual IP + DNS name reachable ONLY
+# from *inside* the cluster - other pods can reach it, the public internet
+# cannot. That's exactly right here: nothing outside the cluster should ever
+# call auth-service directly. Every real login goes
+# browser -> Ingress -> frontend-service -> (internal cluster network) ->
+# auth-service. Keeping this ClusterIP-only, and backing it with a
+# NetworkPolicy (50-network-policies.yaml) that only allows frontend-service
+# to reach it, is a genuine security boundary, not just tidiness.
+#
+# Need to poke auth-service directly for debugging? Don't expose it -
+# temporarily forward a local port to it instead:
+#   kubectl -n rajeshapp port-forward svc/auth-service 5001:5001
+# then curl http://localhost:5001/healthz. The tunnel exists only as long as
+# that command keeps running and never opens anything on the real network.
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: rajeshapp
+  labels:
+    app: auth-service
+spec:
+  type: ClusterIP
+  selector:
+    app: auth-service   # routes to any pod carrying this label - see the Deployment's pod template labels
+  ports:
+    - port: 5001         # what other pods connect to (http://auth-service:5001)
+      targetPort: 5001   # forwarded to this containerPort on the pod
+      name: http

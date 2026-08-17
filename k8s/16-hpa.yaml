@@ -1,0 +1,74 @@
+# 70-hpa.yaml
+# ---------------------------------------------------------------------------
+# HorizontalPodAutoscaler for the 3 services that see real user-driven
+# traffic (auth, grievance, frontend). audit-service is intentionally left
+# out - its load is internal fire-and-forget writes from the other
+# services, not something that spikes with user traffic the same way.
+#
+# REQUIRES metrics-server running in the cluster (it reads CPU/memory usage
+# from it). On Minikube:
+#   minikube addons enable metrics-server
+# Give it a minute after enabling before `kubectl top pods` returns data.
+#
+# `minReplicas` matches each Deployment's current `replicas:` - the HPA
+# takes over scaling from there, so the Deployment's replica count becomes
+# a floor, not a fixed number, once this is applied.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-service-hpa
+  namespace: rajeshapp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70   # scale out once average CPU across pods passes 70% of its request
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: grievance-service-hpa
+  namespace: rajeshapp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: grievance-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-service-hpa
+  namespace: rajeshapp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend-service
+  minReplicas: 2
+  maxReplicas: 8       # frontend absorbs the raw browser traffic, so it gets the highest ceiling
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

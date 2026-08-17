@@ -1,0 +1,33 @@
+/*
+ * app.css - supplementary styles loaded on top of the inline theme in
+ * base.html. Kept separate (and served as a static asset, not inline)
+ * so browsers cache it across page navigations instead of re-downloading
+ * it with every HTML response.
+ */
+
+/* Smooth page transitions for a more "app-like" feel */
+.container-main {
+    animation: fadeIn 0.25s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Consistent focus outline for keyboard/accessibility navigation */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: 2px;
+}
+
+/* Slightly larger click targets on touch devices for nav links */
+@media (max-width: 768px) {
+    .navbar-nav .nav-link {
+        padding-top: 0.6rem;
+        padding-bottom: 0.6rem;
+    }
+}

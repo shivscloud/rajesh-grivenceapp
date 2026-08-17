@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Values.namespace }}
+data:
+  FLASK_ENV: {{ .Values.config.flaskEnv | quote }}
+  JWT_EXPIRY_HOURS: {{ .Values.config.jwtExpiryHours | quote }}
+  GUNICORN_WORKERS: {{ .Values.config.gunicornWorkers | quote }}
+  GUNICORN_TIMEOUT: {{ .Values.config.gunicornTimeout | quote }}
+
+  {{- range $name, $svc := .Values.services }}
+  {{- if $svc.mongoDb }}
+  {{ upper (replace "-" "_" $name) }}_MONGO_DB: {{ $svc.mongoDb | quote }}
+  {{- end }}
+  {{ upper (replace "-" "_" $name) }}_PORT: {{ $svc.port | quote }}
+  {{- end }}
+
+  {{- range $name, $svc := .Values.services }}
+  {{ upper (replace "-" "_" $name) }}_URL: "http://{{ $name }}.{{ $.Values.namespace }}.svc.cluster.local:{{ $svc.port }}"
+  {{- end }}

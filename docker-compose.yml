@@ -1,0 +1,85 @@
+# docker-compose.yml
+# ---------------------------------------------------------------------
+# Fastest possible way to sanity-check that all 4 services + Mongo talk
+# to each other correctly BEFORE bothering with Minikube at all. Same
+# Dockerfiles Kubernetes will use later — this just runs them with
+# docker-compose's much simpler networking model instead of k8s objects.
+#
+# Usage:  docker compose up --build
+# Then:   open http://localhost:5000
+#
+# Service discovery here works differently from Kubernetes but achieves
+# the same thing: docker-compose creates one Docker network for this
+# file and registers each service's `container_name` (or service key)
+# as a DNS name on it — so "http://auth-service:5001" below resolves
+# for the exact same reason "http://auth-service:5001" resolves inside
+# Kubernetes: it's just a different DNS provider underneath.
+services:
+  mongo:
+    image: mongo:7.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    build: ./auth-service
+    environment:
+      MONGO_URI: mongodb://root:example@mongo:27017/
+      MONGO_DB: auth_db
+      JWT_SECRET: dev-jwt-secret-change-in-production
+      AUDIT_SERVICE_URL: http://audit-service:5003
+      PORT: "5001"
+    depends_on:
+      mongo: {condition: service_healthy}
+    ports:
+      - "5001:5001"   # exposed to the host too, handy for direct curl testing
+
+  grievance-service:
+    build: ./grievance-service
+    environment:
+      MONGO_URI: mongodb://root:example@mongo:27017/
+      MONGO_DB: grievance_db
+      JWT_SECRET: dev-jwt-secret-change-in-production
+      AUDIT_SERVICE_URL: http://audit-service:5003
+      PORT: "5002"
+    depends_on:
+      mongo: {condition: service_healthy}
+    ports:
+      - "5002:5002"
+
+  audit-service:
+    build: ./audit-service
+    environment:
+      MONGO_URI: mongodb://root:example@mongo:27017/
+      MONGO_DB: audit_db
+      JWT_SECRET: dev-jwt-secret-change-in-production
+      PORT: "5003"
+    depends_on:
+      mongo: {condition: service_healthy}
+    ports:
+      - "5003:5003"
+
+  frontend-service:
+    build: ./frontend-service
+    environment:
+      SECRET_KEY: dev-secret-key-change-in-production
+      AUTH_SERVICE_URL: http://auth-service:5001
+      GRIEVANCE_SERVICE_URL: http://grievance-service:5002
+      AUDIT_SERVICE_URL: http://audit-service:5003
+      PORT: "5000"
+    depends_on:
+      - auth-service
+      - grievance-service
+      - audit-service
+    ports:
+      - "5000:5000"   # the only port a human actually needs to open
+
+volumes:
+  mongo-data:

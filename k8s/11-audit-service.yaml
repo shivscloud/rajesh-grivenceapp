@@ -1,0 +1,25 @@
+# 31-audit-service.yaml
+# ---------------------------------------------------------------------------
+# ClusterIP. audit-service is the clearest example in this whole project of
+# a service that should NEVER be externally reachable - it has no UI, no
+# human-facing purpose, and exists purely so other backend services can
+# record "X happened". Don't be tempted to expose this "just to check it
+# works from your laptop" - use `kubectl port-forward` instead (see the
+# comment in 11-auth-service.yaml); a NodePort/Ingress rule is a standing
+# hole in the cluster's network boundary, a port-forward tunnel exists only
+# while you're actively debugging.
+apiVersion: v1
+kind: Service
+metadata:
+  name: audit-service
+  namespace: rajeshapp
+  labels:
+    app: audit-service
+spec:
+  type: ClusterIP
+  selector:
+    app: audit-service
+  ports:
+    - port: 5003
+      targetPort: 5003
+      name: http

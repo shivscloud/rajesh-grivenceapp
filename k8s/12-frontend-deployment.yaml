@@ -1,0 +1,120 @@
+# 40-frontend-deployment.yaml
+# ---------------------------------------------------------------------------
+# ServiceAccount, Deployment, PodDisruptionBudget for frontend-service - the
+# public-facing BFF (backend-for-frontend). Same production pattern as
+# 10-auth-deployment.yaml; differences called out below.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend-service
+  namespace: rajeshapp
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-service
+  namespace: rajeshapp
+  labels:
+    app: frontend-service
+    app.kubernetes.io/part-of: rajeshapp
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: frontend-service
+  template:
+    metadata:
+      labels:
+        app: frontend-service
+    spec:
+      serviceAccountName: frontend-service
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: frontend-service
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: frontend-service
+          image: rajeshapp/frontend-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+              name: http
+          env:
+            - name: PORT
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: FRONTEND_PORT}}
+            - name: FLASK_ENV
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: FLASK_ENV}}
+            # No MONGO_URI or JWT_SECRET here at all - frontend-service never
+            # talks to Mongo and never verifies a JWT itself, it only
+            # carries the token in the browser session and forwards it as a
+            # Bearer header. It genuinely does not need the signing secret.
+            # Principle of least privilege applied to configuration: a
+            # service should only ever be handed the secrets its own code
+            # actually uses.
+            - name: AUTH_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUTH_SERVICE_URL}}
+            - name: GRIEVANCE_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: GRIEVANCE_SERVICE_URL}}
+            - name: AUDIT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: rajeshapp-config, key: AUDIT_SERVICE_URL}}
+            - name: SECRET_KEY
+              valueFrom: {secretKeyRef: {name: rajeshapp-secrets, key: SECRET_KEY}}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet: {path: /healthz, port: 5000}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # readiness here checks that auth-service is reachable (see the
+          # comment above /readyz in frontend-service/app.py) - so if
+          # auth-service is ever fully down, Kubernetes stops routing users
+          # to a frontend pod that can't let anyone log in, rather than
+          # showing everyone a broken login page.
+          readinessProbe:
+            httpGet: {path: /readyz, port: 5000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet: {path: /healthz, port: 5000}
+            periodSeconds: 3
+            failureThreshold: 10
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "256Mi"}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-service-pdb
+  namespace: rajeshapp
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: frontend-service

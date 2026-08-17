@@ -1,0 +1,64 @@
+# 02-configmap.yaml
+# ---------------------------------------------------------------------------
+# Non-secret configuration shared by all 4 services, in ONE ConfigMap.
+# Anything with a credential does NOT belong here - a ConfigMap is stored as
+# plaintext in etcd and is readable by anyone with `get configmap` RBAC
+# permission on this namespace. Credentials live in 03-secret.yaml instead.
+#
+# SERVICE DISCOVERY, EXPLAINED:
+# Kubernetes runs a cluster-wide DNS server (CoreDNS) that auto-creates one
+# DNS record per Service object, in the form:
+#     <service-name>.<namespace>.svc.cluster.local
+# Below we spell out the FULL "<service>.rajeshapp.svc.cluster.local" form
+# (rather than the short "http://auth-service:5001" the dev version used)
+# deliberately, for two production reasons:
+#   1. It is namespace-explicit - if this ConfigMap is ever copied into a
+#      different namespace by mistake, the short form would silently resolve
+#      to a DIFFERENT service (or nothing), while the FQDN form fails loudly.
+#   2. It reads unambiguously in logs/traces when multiple namespaces
+#      (staging, prod, canary) exist on the same cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rajeshapp-config
+  namespace: rajeshapp
+data:
+  FLASK_ENV: "production"
+
+  # ---- Per-service Mongo database names -----------------------------------
+  # All 3 databases physically live on the SAME Mongo StatefulSet (cheapest
+  # setup that still gives each service its own data-ownership boundary -
+  # see the long comment in 04-mongo-statefulset.yaml). Each service's code
+  # is only ever configured with ITS OWN db name, so no service can
+  # accidentally read/write another's collections even though they share
+  # one Mongo process today.
+  AUTH_MONGO_DB: "auth_db"
+  GRIEVANCE_MONGO_DB: "grievance_db"
+  AUDIT_MONGO_DB: "audit_db"
+
+  # ---- Ports each Gunicorn process binds to inside its container ---------
+  # Must match containerPort in every *-deployment.yaml and targetPort in
+  # every *-service.yaml below - if these ever drift apart, you'll see
+  # readiness-probe timeouts even though the app itself is fine.
+  AUTH_PORT: "5001"
+  GRIEVANCE_PORT: "5002"
+  AUDIT_PORT: "5003"
+  FRONTEND_PORT: "5000"
+
+  # ---- JWT settings ---------------------------------------------------------
+  JWT_EXPIRY_HOURS: "24"
+
+  # ---- Internal service-discovery URLs (cluster-DNS, full FQDN form) -----
+  AUTH_SERVICE_URL: "http://auth-service.rajeshapp.svc.cluster.local:5001"
+  GRIEVANCE_SERVICE_URL: "http://grievance-service.rajeshapp.svc.cluster.local:5002"
+  AUDIT_SERVICE_URL: "http://audit-service.rajeshapp.svc.cluster.local:5003"
+
+  # ---- Gunicorn tuning ------------------------------------------------------
+  # NOTE: each Dockerfile currently hardcodes `gunicorn --workers 3 ...` in
+  # its CMD, so these two keys are NOT read by the app yet - they're staged
+  # here as the config surface for a small Dockerfile follow-up:
+  #   CMD ["sh","-c","gunicorn --workers ${GUNICORN_WORKERS:-3} --timeout ${GUNICORN_TIMEOUT:-30} --bind 0.0.0.0:$PORT app:app"]
+  # Left as a deliberate TODO rather than silently wired in, so nothing here
+  # claims to configure behavior it doesn't actually control yet.
+  GUNICORN_WORKERS: "3"
+  GUNICORN_TIMEOUT: "30"

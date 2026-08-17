@@ -1,0 +1,64 @@
+{{- if .Values.networkPolicies.enabled }}
+# Default-deny, then explicitly allow only the traffic this app needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-from-anywhere
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {matchLabels: {app: frontend-service}}
+  policyTypes: [Ingress]
+  ingress:
+    - {}   # frontend-service is the public entry point — no restriction
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-from-frontend
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app, operator: In, values: [auth-service, grievance-service]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: frontend-service}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-audit-from-backend
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {matchLabels: {app: audit-service}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: auth-service}}
+        - podSelector: {matchLabels: {app: grievance-service}}
+        - podSelector: {matchLabels: {app: frontend-service}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mongo-from-backend
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {matchLabels: {app: mongo}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: auth-service}}
+        - podSelector: {matchLabels: {app: grievance-service}}
+        - podSelector: {matchLabels: {app: audit-service}}
+{{- end }}

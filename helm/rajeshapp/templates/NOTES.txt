@@ -1,0 +1,12 @@
+rajeshapp deployed as release "{{ .Release.Name }}" in namespace {{ .Values.namespace }}.
+
+Check rollout status:
+  kubectl get all -n {{ .Values.namespace }}
+  kubectl rollout status -n {{ .Values.namespace }} deployment/frontend-service
+
+Open the app:
+{{- if .Values.ingress.enabled }}
+  http://{{ .Values.ingress.host }}   (make sure it resolves to your ingress controller)
+{{- else }}
+  minikube service frontend-service -n {{ .Values.namespace }}
+{{- end }}

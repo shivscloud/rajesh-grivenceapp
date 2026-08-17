@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: {{ .Values.namespace }}
+  labels: {app: mongo}
+spec:
+  clusterIP: None      # headless — gives each pod (mongo-0) a stable DNS name
+  selector: {app: mongo}
+  ports:
+    - port: 27017
+      name: mongo
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: {{ .Values.namespace }}
+  labels: {app: mongo}
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels: {app: mongo}
+  template:
+    metadata:
+      labels: {app: mongo}
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsNonRoot: true
+      containers:
+        - name: mongo
+          image: {{ .Values.mongo.image | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 27017
+              name: mongo
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom: {secretKeyRef: {name: {{ .Release.Name }}-secrets, key: MONGO_ROOT_USERNAME}}
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Release.Name }}-secrets, key: MONGO_ROOT_PASSWORD}}
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          readinessProbe:
+            exec: {command: ["mongosh", "--eval", "db.adminCommand('ping')"]}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: ["mongosh", "--eval", "db.adminCommand('ping')"]}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.mongo.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata: {name: mongo-data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.mongo.storageClassName }}
+        storageClassName: {{ .Values.mongo.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests: {storage: {{ .Values.mongo.storage }}}

@@ -1,0 +1,28 @@
+# 00-namespace.yaml
+# ---------------------------------------------------------------------------
+# Every object in this project lives inside ONE namespace: "rajeshapp".
+# Reasons this matters for a production cluster (not just tidiness):
+#   1. RBAC boundary   - you can grant a team/CI service-account access to
+#      only "rajeshapp" instead of the whole cluster.
+#   2. ResourceQuota / LimitRange (see 01-resourcequota.yaml) only apply
+#      per-namespace, so this is what makes "this app can use at most X CPU"
+#      enforceable.
+#   3. NetworkPolicies (20-network-policies.yaml) select pods by label
+#      *within* a namespace by default - namespacing keeps that scoping sane.
+#   4. Blast-radius control: `kubectl delete namespace rajeshapp` tears down
+#      every object below cleanly, without touching anything else sharing
+#      the cluster (other teams' namespaces, kube-system, etc).
+#
+# NOTE: cluster-scoped resources (the Namespace object itself, PersistentVolumes,
+# ClusterRoles, StorageClasses) are NOT inside any namespace - this file is the
+# one exception, everything else in k8s/ sets `namespace: rajeshapp` explicitly.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rajeshapp
+  labels:
+    # Standard Kubernetes recommended labels - kubectl, dashboards, and
+    # observability tooling (Prometheus, Grafana, Lens) all understand these.
+    app.kubernetes.io/part-of: rajeshapp
+    app.kubernetes.io/managed-by: kubectl
+    environment: production          # swap to "minikube" / "staging" per overlay later
