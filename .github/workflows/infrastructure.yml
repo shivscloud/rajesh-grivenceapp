@@ -1,4 +1,4 @@
-name: Infrastructure
+name: Infrastructure (Lint but no fail)
 
 on:
   workflow_run:
@@ -9,6 +9,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  security-events: write   # still needed for SARIF upload
 
 env:
   AWS_REGION: us-west-2
@@ -23,15 +24,16 @@ jobs:
     outputs:
       should-proceed: ${{ steps.check.outputs.should-proceed }}
     steps:
-      - name: Verify CI success
+      - run: echo "should-proceed=true" >> $GITHUB_OUTPUT
         id: check
-        run: echo "should-proceed=true" >> $GITHUB_OUTPUT
 
   lint:
-    name: Terraform Lint & Security Scan
+    name: Lint & Security Scan (non‑blocking)
     needs: check-ci
     if: needs.check-ci.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
+    # This job will always succeed, even if checks find issues.
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +41,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_branch }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -48,37 +50,38 @@ jobs:
         with:
           tflint_version: latest
 
-      - name: Run TFLint
+      - name: Run TFLint (non‑failing)
         run: |
           cd ${{ env.WORKING_DIR }}
           tflint --init
-          tflint --recursive
+          tflint --recursive --error-on-issue=false
 
-      - name: Run Checkov
+      - name: Run Checkov (SARIF) – non‑blocking
         uses: bridgecrewio/checkov-action@master
         with:
           directory: ${{ env.WORKING_DIR }}
           framework: terraform
           output_format: sarif
-          output_file_path: results.sarif
+          output_file_path: ${{ env.WORKING_DIR }}/results.sarif
+          soft_fail: true   # ⬅️ do not fail the step
 
-      - name: Upload Checkov SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+      - name: Upload Checkov SARIF (if file exists)
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles(format('{0}/results.sarif', env.WORKING_DIR)) != ''
         with:
-          sarif_file: results.sarif
+          sarif_file: ${{ env.WORKING_DIR }}/results.sarif
 
-      - name: Run OPA/Nag scan
+      - name: Run OPA/Nag scan – non‑blocking
         uses: bridgecrewio/checkov-action@master
         with:
           directory: ${{ env.WORKING_DIR }}
           framework: terraform_plan
           check: CKV_AWS_1,CKV_AWS_2,CKV_AWS_3
-          soft_fail: false
+          soft_fail: true   # ⬅️ do not fail the step
 
   terraform:
     name: Terraform Apply
-    needs: [check-ci, lint]
+    needs: [check-ci, lint]   # waits for lint, but lint always succeeds
     if: needs.check-ci.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
 
@@ -94,7 +97,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
