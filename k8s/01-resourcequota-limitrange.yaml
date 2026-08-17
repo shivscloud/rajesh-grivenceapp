@@ -17,11 +17,11 @@ metadata:
   namespace: rajeshapp
 spec:
   hard:
-    requests.cpu: "2"          # sum of every pod's cpu request must stay <= 2 cores
-    requests.memory: "2Gi"     # sum of every pod's memory request must stay <= 2Gi
-    limits.cpu: "4"            # sum of every pod's cpu limit must stay <= 4 cores
-    limits.memory: "4Gi"       # sum of every pod's memory limit must stay <= 4Gi
-    pods: "20"                 # hard cap on total pod count in this namespace
+    requests.cpu: "2000m"
+    requests.memory: "4096Mi"
+    limits.cpu: "2000m"
+    limits.memory: "4096Mi"
+    pods: "3"
     persistentvolumeclaims: "5"
 ---
 # LimitRange: DEFAULT requests/limits applied automatically to any container
@@ -43,8 +43,8 @@ spec:
         cpu: "250m"
         memory: "256Mi"
       max:                       # no single container may ever request more than this
-        cpu: "1"
-        memory: "1Gi"
+        cpu: "256m"
+        memory: "512Mi"
       min:                       # no single container may request less than this
         cpu: "10m"
         memory: "32Mi"
