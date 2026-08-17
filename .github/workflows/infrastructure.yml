@@ -9,12 +9,12 @@ on:
 permissions:
   id-token: write
   contents: read
-  security-events: write   # still needed for SARIF upload
+  security-events: write
 
 env:
-  AWS_REGION: us-west-2
-  TF_VERSION: "1.5.0"
-  WORKING_DIR: "./terraform"
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+  TF_VERSION: ${{ vars.TF_VERSION || '1.5.0' }}
+  WORKING_DIR: ${{ vars.WORKING_DIR || './terraform' }}
 
 jobs:
   check-ci:
@@ -32,8 +32,7 @@ jobs:
     needs: check-ci
     if: needs.check-ci.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
-    # This job will always succeed, even if checks find issues.
-    continue-on-error: true
+    continue-on-error: true   # ⬅️ this keeps the job from failing
 
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +53,7 @@ jobs:
         run: |
           cd ${{ env.WORKING_DIR }}
           tflint --init
-          tflint --recursive --error-on-issue=false
+          tflint --recursive || true   # ignore exit code
 
       - name: Run Checkov (SARIF) – non‑blocking
         uses: bridgecrewio/checkov-action@master
@@ -63,7 +62,7 @@ jobs:
           framework: terraform
           output_format: sarif
           output_file_path: ${{ env.WORKING_DIR }}/results.sarif
-          soft_fail: true   # ⬅️ do not fail the step
+          soft_fail: true
 
       - name: Upload Checkov SARIF (if file exists)
         uses: github/codeql-action/upload-sarif@v4
@@ -77,11 +76,11 @@ jobs:
           directory: ${{ env.WORKING_DIR }}
           framework: terraform_plan
           check: CKV_AWS_1,CKV_AWS_2,CKV_AWS_3
-          soft_fail: true   # ⬅️ do not fail the step
+          soft_fail: true
 
   terraform:
     name: Terraform Apply
-    needs: [check-ci, lint]   # waits for lint, but lint always succeeds
+    needs: [check-ci, lint]
     if: needs.check-ci.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
 
