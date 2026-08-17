@@ -5,7 +5,7 @@ on:
     workflows: ["Infrastructure"]
     types: [completed]
     branches: [main, master]
-  workflow_dispatch:  
+  workflow_dispatch:   # 👈 allows manual runs
 
 permissions:
   id-token: write
@@ -32,14 +32,35 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Debug EC2 instances
+        run: |
+          echo "Listing EC2 instances with tag Name=rajesh-grievanceapp-prod-kind"
+          aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=rajesh-grievanceapp-prod-kind" \
+            --query "Reservations[].Instances[].{ID:InstanceId,State:State.Name,PublicIP:PublicIpAddress}" \
+            --output table
+
       - name: Get EC2 instance public IP
         id: ec2
         run: |
           INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=rajesh-grievanceapp-prod-ec2-kind-host" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].InstanceId" --output text)
+            --filters "Name=tag:Name,Values=rajesh-grievanceapp-prod-kind" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].InstanceId" --output text)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "❌ No running EC2 instance found with tag 'rajesh-grievanceapp-prod-kind'"
+            exit 1
+          fi
+
           PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID \
-            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+            --query "Reservations[].Instances[].PublicIpAddress" --output text)
+
+          if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+            echo "❌ Instance $INSTANCE_ID has no public IP assigned"
+            exit 1
+          fi
+
+          echo "✅ Found instance $INSTANCE_ID with public IP $PUBLIC_IP"
           echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
 
       - name: Setup SSH key
