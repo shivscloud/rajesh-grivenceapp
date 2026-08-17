@@ -1,7 +1,12 @@
-name: Infrastructure
+name: Infrastructure (Lint but no fail)
 
 on:
-  # ONLY infrastructure.yml change
+  # ✅ Direct trigger: when you edit this workflow file itself
+  pull_request:
+    branches: [main, master]
+    paths-ignore:
+      - '.github/workflows/infrastructure.yml'    
+
   push:
     branches:
       - main
@@ -9,7 +14,7 @@ on:
     paths:
       - '.github/workflows/infrastructure.yml'
 
-  # Run after CI completes
+  # Execute after CI succeeds
   workflow_run:
     workflows:
       - CI
@@ -18,10 +23,11 @@ on:
     branches:
       - main
       - master
+    
 
 permissions:
   contents: read
-  security-events: write
+  security-events: write   # needed for SARIF upload
 
 env:
   AWS_REGION: us-east-1
@@ -29,47 +35,43 @@ env:
   WORKING_DIR: ${{ vars.WORKING_DIR || './terraform' }}
 
 jobs:
-
-  check:
-    name: Check trigger
+  # ------------------------------------------------
+  # Decide if we should proceed
+  # ------------------------------------------------
+  check-ci:
+    name: Check CI status or direct push
     runs-on: ubuntu-latest
-
+    if: |
+      (github.event_name == 'push') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
-      run-infra: ${{ steps.check.outputs.run-infra }}
-
+      should-proceed: ${{ steps.check.outputs.should-proceed }}
     steps:
-      - name: Check event
+      - name: Determine if we should proceed
         id: check
         run: |
-          echo "Event: ${{ github.event_name }}"
-
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            echo "Direct infrastructure change"
-            echo "run-infra=true" >> "$GITHUB_OUTPUT"
-
-          elif [[ "${{ github.event_name }}" == "workflow_run" &&
-                  "${{ github.event.workflow_run.conclusion }}" == "success" ]]; then
-            echo "CI completed successfully"
-            echo "run-infra=true" >> "$GITHUB_OUTPUT"
-
+            echo "should-proceed=true" >> $GITHUB_OUTPUT
           else
-            echo "Infrastructure will not run"
-            echo "run-infra=false" >> "$GITHUB_OUTPUT"
+            # workflow_run – we already filtered by success
+            echo "should-proceed=true" >> $GITHUB_OUTPUT
           fi
 
+  # ------------------------------------------------
+  # Lint & Security Scan (non‑blocking)
+  # ------------------------------------------------
   lint:
-    name: Terraform Lint & Security
-    needs: check
-    if: needs.check.outputs.run-infra == 'true'
+    name: Lint & Security Scan (non‑blocking)
+    needs: check-ci
+    if: needs.check-ci.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: true   # ⬅️ never blocks the pipeline
 
     steps:
-
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -81,13 +83,13 @@ jobs:
         with:
           tflint_version: latest
 
-      - name: TFLint
-        working-directory: ${{ env.WORKING_DIR }}
+      - name: Run TFLint (non‑failing)
         run: |
+          cd ${{ env.WORKING_DIR }}
           tflint --init
-          tflint --recursive || true
+          tflint --recursive || true   # ignore exit code
 
-      - name: Checkov
+      - name: Run Checkov (SARIF) – non‑blocking
         uses: bridgecrewio/checkov-action@master
         with:
           directory: ${{ env.WORKING_DIR }}
@@ -96,26 +98,36 @@ jobs:
           output_file_path: ${{ env.WORKING_DIR }}/results.sarif
           soft_fail: true
 
-      - name: Upload Checkov SARIF
-        if: always() && hashFiles(format('{0}/results.sarif', env.WORKING_DIR)) != ''
+      - name: Upload Checkov SARIF (if file exists)
         uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles(format('{0}/results.sarif', env.WORKING_DIR)) != ''
         with:
           sarif_file: ${{ env.WORKING_DIR }}/results.sarif
 
+      - name: Run OPA/Nag scan – non‑blocking
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ${{ env.WORKING_DIR }}
+          framework: terraform_plan
+          check: CKV_AWS_1,CKV_AWS_2,CKV_AWS_3
+          soft_fail: true
+
+  # ------------------------------------------------
+  # Terraform Apply (uses access keys, not OIDC)
+  # ------------------------------------------------
   terraform:
     name: Terraform Apply
-    needs: [check, lint]
-    if: needs.check.outputs.run-infra == 'true'
+    needs: [check-ci, lint]
+    if: needs.check-ci.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout exact commit
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (using access keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -128,17 +140,22 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Init
-        working-directory: ${{ env.WORKING_DIR }}
-        run: terraform init
+        run: |
+          cd ${{ env.WORKING_DIR }}
+          terraform init
 
       - name: Terraform Validate
-        working-directory: ${{ env.WORKING_DIR }}
-        run: terraform validate
+        run: |
+          cd ${{ env.WORKING_DIR }}
+          terraform validate
 
       - name: Terraform Plan
-        working-directory: ${{ env.WORKING_DIR }}
-        run: terraform plan -out=tfplan
+        id: plan
+        run: |
+          cd ${{ env.WORKING_DIR }}
+          terraform plan -out=tfplan
 
       - name: Terraform Apply
-        working-directory: ${{ env.WORKING_DIR }}
-        run: terraform apply -auto-approve tfplan
+        run: |
+          cd ${{ env.WORKING_DIR }}
+          terraform apply -auto-approve tfplan
