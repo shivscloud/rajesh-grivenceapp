@@ -142,7 +142,8 @@ jobs:
       - name: Terraform Init
         run: |
           cd ${{ env.WORKING_DIR }}
-          terraform init
+          terraform init -input=false
+
 
       - name: Terraform Validate
         run: |
