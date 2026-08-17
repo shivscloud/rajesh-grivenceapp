@@ -11,12 +11,7 @@ permissions:
   contents: read
 
 env:
-  # Must match terraform/environments/prod's aws_region (us-east-1) and
-  # the region used in .github/workflows/infrastructure.yml - otherwise
-  # `aws eks update-kubeconfig` below looks for the cluster in the wrong
-  # region and fails.
   AWS_REGION: us-east-1
-  EKS_CLUSTER_NAME: rajesh-grievanceapp-prod
 
 jobs:
   check-infrastructure:
@@ -49,7 +44,7 @@ jobs:
             }
 
   deploy:
-    name: Deploy to Production
+    name: Deploy to EC2 (kind)
     needs: check-infrastructure
     if: needs.check-infrastructure.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
@@ -95,31 +90,62 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Update kubeconfig
+      - name: Get EC2 instance public IP
+        id: ec2
         run: |
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=rajesh-grievanceapp-prod-ec2-kind-host" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" --output text)
+          PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
 
-      - name: Deploy with Helm
+      - name: Setup SSH key
         run: |
-          # helm/rajeshapp/values.yaml has ONE global image.registry + image.tag
-          # (the Deployment template loops over .Values.services and renders
-          # "{{ .Values.image.registry }}/{{ $name }}:{{ .Values.image.tag }}"
-          # per service) - there is no per-service auth.image.*/grievance.image.*
-          # key in this chart. ci.yml pushes every service as
-          # "<DOCKERHUB_USERNAME>/<service-name>:<github.sha>", which is exactly
-          # what registry=<DOCKERHUB_USERNAME> + tag=<sha> renders to, so these
-          # two --set flags are enough to point every service at the image CI
-          # just built - no per-service overrides needed.
-          helm upgrade --install rajeshapp ./helm/rajeshapp \
-            --namespace rajeshapp --create-namespace \
-            --set image.registry=${{ secrets.DOCKERHUB_USERNAME }} \
-            --set image.tag=${{ env.IMAGE_TAG }} \
-            --set image.pullPolicy=IfNotPresent \
-            --wait --timeout=10m
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > /tmp/ec2_key.pem
+          chmod 600 /tmp/ec2_key.pem
+
+      - name: Deploy to EC2 kind cluster
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem ec2-user@${{ steps.ec2.outputs.public_ip }} << 'EOF'
+            set -e
+            cd /opt/rajesh-grievanceapp
+
+            # Pull latest images from Docker Hub using CI tag
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/auth-service:${{ env.IMAGE_TAG }}
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/grievance-service:${{ env.IMAGE_TAG }}
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/audit-service:${{ env.IMAGE_TAG }}
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/frontend-service:${{ env.IMAGE_TAG }}
+
+            # Load images into kind cluster
+            kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/auth-service:${{ env.IMAGE_TAG }} --name rajesh-kind
+            kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/grievance-service:${{ env.IMAGE_TAG }} --name rajesh-kind
+            kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/audit-service:${{ env.IMAGE_TAG }} --name rajesh-kind
+            kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/frontend-service:${{ env.IMAGE_TAG }} --name rajesh-kind
+
+            # Deploy/upgrade with Helm using CI image tag
+            helm upgrade --install rajeshapp ./helm/rajeshapp \
+              --namespace rajesh \
+              --create-namespace \
+              --set image.registry=${{ secrets.DOCKERHUB_USERNAME }} \
+              --set image.tag=${{ env.IMAGE_TAG }} \
+              --set service.type=NodePort \
+              --set service.nodePort=30080 \
+              --wait --timeout=10m
+
+            echo "Deployment complete"
+          EOF
 
       - name: Verify deployment
         run: |
-          kubectl rollout status deployment/auth-service -n rajeshapp --timeout=300s
-          kubectl rollout status deployment/grievance-service -n rajeshapp --timeout=300s
-          kubectl rollout status deployment/audit-service -n rajeshapp --timeout=300s
-          kubectl rollout status deployment/frontend-service -n rajeshapp --timeout=300s
+          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem ec2-user@${{ steps.ec2.outputs.public_ip }} << 'EOF'
+            kubectl get pods -n rajesh
+            kubectl get svc -n rajesh
+            echo ""
+            echo "Application accessible at: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080"
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/ec2_key.pem
