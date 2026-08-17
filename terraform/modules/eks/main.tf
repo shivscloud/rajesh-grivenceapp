@@ -1,52 +1,160 @@
-	module "eks" {
-	  source  = "terraform-aws-modules/eks/aws"
-	  version = "~> 19.0"
+############################
+# EKS CLUSTER IAM ROLE
+############################
 
-	  cluster_name    = var.cluster_name
-	  cluster_version = "1.28"
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "${var.cluster_name}-cluster-role"
 
-	  vpc_id                         = var.vpc_id
-	  subnet_ids                     = var.private_subnet_ids
-	  control_plane_subnet_ids       = var.private_subnet_ids
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
 
-	  cluster_endpoint_public_access = true
+    Statement = [
+      {
+        Effect = "Allow"
 
-	  create_iam_role = false
-	  iam_role_arn    = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/eksClusterRole"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
 
-	  eks_managed_node_groups = {
-	    main = {
-	      name = "main-node-group"
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
 
-	      instance_types = ["t3.medium"]
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  role       = aws_iam_role.eks_cluster_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
 
-	      min_size     = 2
-	      max_size     = 4
-	      desired_size = 2
+############################
+# EKS CLUSTER
+############################
 
-	      iam_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/AmazonEKSNodeRole"
-	    }
-	  }
-	}
+resource "aws_eks_cluster" "eks_cluster" {
+  name     = var.cluster_name
+  role_arn = aws_iam_role.eks_cluster_role.arn
+  version  = var.cluster_version
 
-	data "aws_caller_identity" "current" {}
+  vpc_config {
+    subnet_ids = var.private_subnet_ids
 
-	resource "aws_eks_addon" "coredns" {
-	  cluster_name = module.eks.cluster_name
-	  addon_name   = "coredns"
-	}
+    endpoint_private_access = false
+    endpoint_public_access  = true
+  }
 
-	resource "aws_eks_addon" "kube_proxy" {
-	  cluster_name = module.eks.cluster_name
-	  addon_name   = "kube-proxy"
-	}
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy
+  ]
+}
 
-	resource "aws_eks_addon" "vpc_cni" {
-	  cluster_name = module.eks.cluster_name
-	  addon_name   = "vpc-cni"
-	}
+############################
+# NODE GROUP IAM ROLE
+############################
 
-	resource "aws_eks_addon" "ebs_csi_driver" {
-	  cluster_name = module.eks.cluster_name
-	  addon_name   = "aws-ebs-csi-driver"
-	}
+resource "aws_iam_role" "eks_node_group_role" {
+  name = "${var.cluster_name}-node-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_worker_policy" {
+  role       = aws_iam_role.eks_node_group_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+  role       = aws_iam_role.eks_node_group_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+}
+
+resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
+  role       = aws_iam_role.eks_node_group_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+############################
+# MANAGED NODE GROUP
+############################
+
+resource "aws_eks_node_group" "main" {
+  cluster_name = aws_eks_cluster.eks_cluster.name
+
+  node_group_name = "${var.cluster_name}-nodes"
+
+  node_role_arn = aws_iam_role.eks_node_group_role.arn
+
+  subnet_ids = var.private_subnet_ids
+
+  instance_types = ["t3.medium"]
+
+  scaling_config {
+    desired_size = 2
+    min_size     = 2
+    max_size     = 4
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_ecr_policy
+  ]
+}
+
+############################
+# OIDC
+############################
+
+data "tls_certificate" "eks" {
+  url = aws_eks_cluster.eks_cluster.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "cluster" {
+  url = aws_eks_cluster.eks_cluster.identity[0].oidc[0].issuer
+
+  client_id_list = [
+    "sts.amazonaws.com"
+  ]
+
+  thumbprint_list = [
+    data.tls_certificate.eks.certificates[0].sha1_fingerprint
+  ]
+
+  depends_on = [
+    aws_eks_cluster.eks_cluster
+  ]
+}
+
+############################
+# EKS DATA SOURCES
+############################
+
+data "aws_eks_cluster" "cluster" {
+  name = aws_eks_cluster.eks_cluster.name
+
+  depends_on = [
+    aws_eks_cluster.eks_cluster
+  ]
+}
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = aws_eks_cluster.eks_cluster.name
+
+  depends_on = [
+    aws_eks_cluster.eks_cluster
+  ]
+}
