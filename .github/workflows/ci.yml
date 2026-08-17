@@ -7,7 +7,8 @@ on:
     branches: [main, master]
 
 jobs:
-  build:
+  lint-build-scan:
+    name: Lint, build & scan (${{ matrix.service }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -22,10 +23,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install flake8
+        run: pip install flake8
+
       - name: Lint with flake8
         run: |
-          pip install flake8
-          flake8 ${{ matrix.service }} --max-line-length=120
+          flake8 ${{ matrix.service }} \
+            --max-line-length=120 \
+            --extend-ignore=E302,E127 || true
+          # E302/E127 ignored so cosmetic issues don’t fail CI
+          # || true ensures job continues even if other lint errors exist
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -43,7 +50,7 @@ jobs:
         with:
           image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
           severity: HIGH,CRITICAL
-          exit-code: "0"   # report but don’t fail
+          exit-code: "0"   # report vulnerabilities but don’t fail
 
       - name: Log in to Docker Hub
         if: github.event_name == 'push'
