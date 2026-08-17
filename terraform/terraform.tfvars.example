@@ -1,0 +1,6 @@
+aws_region       = "us-east-1"
+vpc_id           = "vpc-xxxxxxxx"
+subnet_id        = "subnet-xxxxxxxx"
+key_name         = "your-existing-keypair"
+allowed_ssh_cidr = "YOUR_IP/32"
+instance_type    = "t3.medium"

@@ -3,7 +3,11 @@ name: Infrastructure (Lint but no fail to find)
 on:
   pull_request:
     branches: [main, master]
-    paths-ignore:
+    # was paths-ignore (backwards - meant a PR touching ONLY terraform/**
+    # never ran this workflow at all, so infra changes never got linted
+    # or planned before merge). Fixed to paths, matching the push trigger
+    # below, so PRs that touch terraform get a plan for review.
+    paths:
       - '.github/workflows/infrastructure.yml'
       - 'terraform/**'
   push:
@@ -173,6 +177,11 @@ jobs:
           terraform plan -out=tfplan
 
       - name: Terraform Apply
+        # Only apply on an actual push to main/master or a CI-success
+        # workflow_run - never on pull_request. Previously this had no
+        # guard at all, so a PR that only touched terraform/** could run
+        # `terraform apply -auto-approve` before anyone reviewed the plan.
+        if: github.event_name != 'pull_request'
         run: |
           cd ${{ env.WORKING_DIR }}
           terraform apply -auto-approve tfplan

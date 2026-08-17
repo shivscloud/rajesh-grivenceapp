@@ -11,7 +11,11 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: us-west-2
+  # Must match terraform/environments/prod's aws_region (us-east-1) and
+  # the region used in .github/workflows/infrastructure.yml - otherwise
+  # `aws eks update-kubeconfig` below looks for the cluster in the wrong
+  # region and fails.
+  AWS_REGION: us-east-1
   EKS_CLUSTER_NAME: rajesh-grievanceapp-prod
 
 jobs:
@@ -96,15 +100,20 @@ jobs:
 
       - name: Deploy with Helm
         run: |
+          # helm/rajeshapp/values.yaml has ONE global image.registry + image.tag
+          # (the Deployment template loops over .Values.services and renders
+          # "{{ .Values.image.registry }}/{{ $name }}:{{ .Values.image.tag }}"
+          # per service) - there is no per-service auth.image.*/grievance.image.*
+          # key in this chart. ci.yml pushes every service as
+          # "<DOCKERHUB_USERNAME>/<service-name>:<github.sha>", which is exactly
+          # what registry=<DOCKERHUB_USERNAME> + tag=<sha> renders to, so these
+          # two --set flags are enough to point every service at the image CI
+          # just built - no per-service overrides needed.
           helm upgrade --install rajeshapp ./helm/rajeshapp \
-            --set auth.image.repository=${{ secrets.DOCKERHUB_USERNAME }}/auth-service \
-            --set auth.image.tag=${{ env.IMAGE_TAG }} \
-            --set grievance.image.repository=${{ secrets.DOCKERHUB_USERNAME }}/grievance-service \
-            --set grievance.image.tag=${{ env.IMAGE_TAG }} \
-            --set audit.image.repository=${{ secrets.DOCKERHUB_USERNAME }}/audit-service \
-            --set audit.image.tag=${{ env.IMAGE_TAG }} \
-            --set frontend.image.repository=${{ secrets.DOCKERHUB_USERNAME }}/frontend-service \
-            --set frontend.image.tag=${{ env.IMAGE_TAG }} \
+            --namespace rajeshapp --create-namespace \
+            --set image.registry=${{ secrets.DOCKERHUB_USERNAME }} \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.pullPolicy=IfNotPresent \
             --wait --timeout=10m
 
       - name: Verify deployment

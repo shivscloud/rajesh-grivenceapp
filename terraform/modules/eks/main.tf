@@ -29,7 +29,7 @@ module "eks" {
       name = "main-node-group"
 
       instance_types  = ["t3.small"]
-      capacity_type   = "SPOT"   # ~60-70% cheaper than On-Demand
+      capacity_type   = "ON_DEMAND"   # switch to "SPOT" for ~60-70% cheaper nodes (adds interruption risk)
       create_iam_role = false
 
       min_size     = 1
