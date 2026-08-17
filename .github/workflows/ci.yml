@@ -4,9 +4,12 @@ on:
   push:
     branches: [main, master]
     paths-ignore:
-     - '.github/workflows/infrastructure.yml'  
+      - '.github/workflows/infrastructure.yml'
+
   pull_request:
     branches: [main, master]
+    paths-ignore:
+      - '.github/workflows/infrastructure.yml'
 
 permissions:
   contents: read
