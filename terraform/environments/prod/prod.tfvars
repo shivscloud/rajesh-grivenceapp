@@ -7,7 +7,7 @@ project_name = "rajesh-grievanceapp"
 
 # EC2 Configuration (REQUIRED - update these)
 key_name           = "your-ec2-key-pair-name"  # Create this in AWS Console first
-allowed_ssh_cidr   = "YOUR_IP_ADDRESS/32"      # Lock this down to your IP
+allowed_ssh_cidr   = "0.0.0.0/0"                # TODO: restrict to your IP
 allowed_app_cidr   = "0.0.0.0/0"               # Or restrict to specific IPs
 
 # Application Configuration
