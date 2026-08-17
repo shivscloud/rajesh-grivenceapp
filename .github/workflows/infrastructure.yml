@@ -1,43 +1,65 @@
 name: Infrastructure (Lint but no fail)
 
 on:
+  # ✅ Direct trigger: when you edit this workflow file itself
+  push:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/infrastructure.yml'
+
+  # ✅ Trigger after CI workflow completes successfully
   workflow_run:
     workflows: ["CI"]
     types: [completed]
     branches: [main, master]
 
 permissions:
-  id-token: write
   contents: read
-  security-events: write
+  security-events: write   # needed for SARIF upload
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+  AWS_REGION: us-east-1
   TF_VERSION: ${{ vars.TF_VERSION || '1.5.0' }}
   WORKING_DIR: ${{ vars.WORKING_DIR || './terraform' }}
 
 jobs:
+  # ------------------------------------------------
+  # Decide if we should proceed
+  # ------------------------------------------------
   check-ci:
-    name: Check CI status
+    name: Check CI status or direct push
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: |
+      (github.event_name == 'push') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       should-proceed: ${{ steps.check.outputs.should-proceed }}
     steps:
-      - run: echo "should-proceed=true" >> $GITHUB_OUTPUT
+      - name: Determine if we should proceed
         id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "should-proceed=true" >> $GITHUB_OUTPUT
+          else
+            # workflow_run – we already filtered by success
+            echo "should-proceed=true" >> $GITHUB_OUTPUT
+          fi
 
+  # ------------------------------------------------
+  # Lint & Security Scan (non‑blocking)
+  # ------------------------------------------------
   lint:
     name: Lint & Security Scan (non‑blocking)
     needs: check-ci
     if: needs.check-ci.outputs.should-proceed == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true   # ⬅️ this keeps the job from failing
+    continue-on-error: true   # ⬅️ never blocks the pipeline
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -78,6 +100,9 @@ jobs:
           check: CKV_AWS_1,CKV_AWS_2,CKV_AWS_3
           soft_fail: true
 
+  # ------------------------------------------------
+  # Terraform Apply (uses access keys, not OIDC)
+  # ------------------------------------------------
   terraform:
     name: Terraform Apply
     needs: [check-ci, lint]
@@ -85,14 +110,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (using access keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
