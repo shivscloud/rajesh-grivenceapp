@@ -5,7 +5,12 @@ on:
     workflows: ["Infrastructure"]
     types: [completed]
     branches: [main, master]
-  workflow_dispatch:  
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to deploy"
+        required: true
+        default: "latest"
 
 permissions:
   id-token: write
@@ -34,7 +39,6 @@ jobs:
 
       - name: Debug EC2 instances
         run: |
-          echo "Listing EC2 instances with tag Name=rajesh-grievanceapp-prod-kind"
           aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=rajesh-grievanceapp-prod-kind" \
             --query "Reservations[].Instances[].{ID:InstanceId,State:State.Name,PublicIP:PublicIpAddress}" \
@@ -48,7 +52,7 @@ jobs:
             --query "Reservations[].Instances[].InstanceId" --output text)
 
           if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "❌ No running EC2 instance found with tag 'rajesh-grievanceapp-prod-kind'"
+            echo "❌ No running EC2 instance found"
             exit 1
           fi
 
@@ -56,11 +60,10 @@ jobs:
             --query "Reservations[].Instances[].PublicIpAddress" --output text)
 
           if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
-            echo "❌ Instance $INSTANCE_ID has no public IP assigned"
+            echo "❌ Instance $INSTANCE_ID has no public IP"
             exit 1
           fi
 
-          echo "✅ Found instance $INSTANCE_ID with public IP $PUBLIC_IP"
           echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
 
       - name: Setup SSH key
@@ -74,10 +77,12 @@ jobs:
             set -e
             cd /opt/rajesh-grievanceapp
 
+            IMAGE_TAG=${{ github.event.inputs.image_tag || env.IMAGE_TAG }}
+
             # Pull latest images
             for svc in auth-service grievance-service audit-service frontend-service; do
-              docker pull ${{ secrets.DOCKERHUB_USERNAME }}/$svc:${{ env.IMAGE_TAG }}
-              kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/$svc:${{ env.IMAGE_TAG }} --name rajesh-kind
+              docker pull ${{ secrets.DOCKERHUB_USERNAME }}/$svc:$IMAGE_TAG
+              kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/$svc:$IMAGE_TAG --name rajesh-kind
             done
 
             # Helm deploy
@@ -85,7 +90,7 @@ jobs:
               --namespace rajesh \
               --create-namespace \
               --set image.registry=${{ secrets.DOCKERHUB_USERNAME }} \
-              --set image.tag=${{ env.IMAGE_TAG }} \
+              --set image.tag=$IMAGE_TAG \
               --set service.type=NodePort \
               --set service.nodePort=30080 \
               --wait --timeout=10m
