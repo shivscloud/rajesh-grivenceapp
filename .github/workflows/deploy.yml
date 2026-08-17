@@ -5,7 +5,7 @@ on:
     workflows: ["Infrastructure"]
     types: [completed]
     branches: [main, master]
-  workflow_dispatch:   # 👈 allows manual runs
+  workflow_dispatch:  
 
 permissions:
   id-token: write
@@ -70,11 +70,11 @@ jobs:
 
       - name: Deploy to EC2 kind cluster
         run: |
-          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem ec2-user@${{ steps.ec2.outputs.public_ip }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem ubuntu@${{ steps.ec2.outputs.public_ip }} << 'EOF'
             set -e
             cd /opt/rajesh-grievanceapp
 
-            # Pull latest images (replace IMAGE_TAG with your CI artifact or manual input)
+            # Pull latest images
             for svc in auth-service grievance-service audit-service frontend-service; do
               docker pull ${{ secrets.DOCKERHUB_USERNAME }}/$svc:${{ env.IMAGE_TAG }}
               kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/$svc:${{ env.IMAGE_TAG }} --name rajesh-kind
@@ -93,7 +93,7 @@ jobs:
 
       - name: Verify deployment
         run: |
-          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem ec2-user@${{ steps.ec2.outputs.public_ip }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem ubuntu@${{ steps.ec2.outputs.public_ip }} << 'EOF'
             kubectl get pods -n rajesh
             kubectl get svc -n rajesh
           EOF
