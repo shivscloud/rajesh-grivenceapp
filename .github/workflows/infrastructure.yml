@@ -174,7 +174,7 @@ jobs:
         id: plan
         run: |
           cd ${{ env.WORKING_DIR }}
-          terraform plan -out=tfplan
+          terraform plan -var-file=prod.tfvars -out=tfplan
 
       - name: Terraform Apply
         # Only apply on an actual push to main/master or a CI-success
@@ -184,4 +184,4 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           cd ${{ env.WORKING_DIR }}
-          terraform apply -auto-approve tfplan
+          terraform apply -var-file=prod.tfvars -auto-approve tfplan
