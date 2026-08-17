@@ -25,11 +25,15 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.name}-public-${count.index + 1}"
+    Name                     = "${var.name}-public-${count.index + 1}"
     "kubernetes.io/role/elb" = "1"
   }
 }
 
+# Kept for anything you don't want internet-facing (e.g. RDS).
+# No NAT route below — resources here have NO outbound internet access.
+# If something in here later needs to reach AWS APIs (S3, ECR, etc.)
+# without a NAT Gateway, use VPC Endpoints instead — far cheaper than NAT.
 resource "aws_subnet" "private" {
   count = 2
 
@@ -38,29 +42,9 @@ resource "aws_subnet" "private" {
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name = "${var.name}-private-${count.index + 1}"
+    Name                              = "${var.name}-private-${count.index + 1}"
     "kubernetes.io/role/internal-elb" = "1"
   }
-}
-
-resource "aws_eip" "nat" {
-  count = 1
-  domain = "vpc"
-
-  tags = {
-    Name = "${var.name}-nat-eip"
-  }
-}
-
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat[0].id
-  subnet_id     = aws_subnet.public[0].id
-
-  tags = {
-    Name = "${var.name}-nat"
-  }
-
-  depends_on = [aws_internet_gateway.main]
 }
 
 resource "aws_route_table" "public" {
@@ -76,13 +60,10 @@ resource "aws_route_table" "public" {
   }
 }
 
+# No internet route — this is intentional (no NAT Gateway = no cost).
+# Only local VPC traffic reaches these subnets.
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
-  }
 
   tags = {
     Name = "${var.name}-private-rt"
