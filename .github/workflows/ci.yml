@@ -5,12 +5,13 @@ on:
     branches: [main, master]
     paths-ignore:
       - '.github/workflows/infrastructure.yml'
-      - '.github/terraform/*'  
+      - 'terraform/**' 
 
   pull_request:
     branches: [main, master]
     paths-ignore:
       - '.github/workflows/infrastructure.yml'
+      - 'terraform/**'
 
 permissions:
   contents: read

@@ -6,13 +6,14 @@ on:
     branches: [main, master]
     paths-ignore:
       - '.github/workflows/infrastructure.yml'  
-      - '.github/terraform/*'    
+      - 'terraform/**'  
   push:
     branches:
       - main
       - master
     paths:
       - '.github/workflows/infrastructure.yml'
+      - 'terraform/**'
 
   # Execute after CI succeeds
   workflow_run:
