@@ -2,53 +2,142 @@ name: CI
 
 on:
   push:
-    branches: ['main', 'master']
+    branches:
+      - main
+      - master
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
 
 jobs:
+
+  # ============================================================
+  # TEST AND LINT PYTHON SERVICES
+  # ============================================================
   test-and-lint:
+    name: Test ${{ matrix.service }}
     runs-on: ubuntu-latest
+
     strategy:
+      fail-fast: false
       matrix:
-        service: [auth-service, grievance-service, audit-service, frontend-service]
+        service:
+          - auth-service
+          - grievance-service
+          - audit-service
 
     steps:
-      - uses: actions/checkout@v4
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: '${{ matrix.service }}/requirements.txt'
 
       - name: Install dependencies
+        working-directory: ${{ matrix.service }}
         run: |
-          cd ${{ matrix.service }}
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install flake8 pytest
 
       - name: Lint with flake8
+        working-directory: ${{ matrix.service }}
         run: |
-          cd ${{ matrix.service }}
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . \
+            --count \
+            --select=E9,F63,F7,F82 \
+            --show-source \
+            --statistics
 
       - name: Test with pytest
+        working-directory: ${{ matrix.service }}
         run: |
-          cd ${{ matrix.service }}
           python -m pytest --tb=short
 
-  build-and-push:
+
+  # ============================================================
+  # FRONTEND VALIDATION
+  # ============================================================
+  frontend-test:
+    name: Test Frontend
     runs-on: ubuntu-latest
-    needs: test-and-lint
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      matrix:
-        service: [auth-service, grievance-service, audit-service, frontend-service]
 
     steps:
-      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Check frontend type
+        working-directory: frontend-service
+        run: |
+          ls -la
+
+      # If frontend-service has package.json, use Node.js
+      - name: Setup Node.js
+        if: hashFiles('frontend-service/package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend-service/package-lock.json
+
+      - name: Install frontend dependencies
+        if: hashFiles('frontend-service/package.json') != ''
+        working-directory: frontend-service
+        run: |
+          npm ci
+
+      - name: Run frontend lint
+        if: hashFiles('frontend-service/package.json') != ''
+        working-directory: frontend-service
+        run: |
+          npm run lint --if-present
+
+      - name: Run frontend tests
+        if: hashFiles('frontend-service/package.json') != ''
+        working-directory: frontend-service
+        run: |
+          npm test -- --runInBand
+
+
+  # ============================================================
+  # BUILD + TRIVY
+  # ============================================================
+  build-and-push:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    needs:
+      - test-and-lint
+      - frontend-test
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - auth-service
+          - grievance-service
+          - audit-service
+          - frontend-service
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
@@ -57,34 +146,43 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.service }}
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Run Trivy vulnerability scanner
+      - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}'
-          format: 'table'
-          exit-code: '0'
+          format: table
+          exit-code: '1'
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
 
+
+  # ============================================================
+  # HELM VALIDATION
+  # ============================================================
   helm-validate:
+    name: Helm Validation
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v3
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
         with:
-          version: 'v3.12.0'
+          version: 'v3.17.0'
 
       - name: Helm lint
         run: |
@@ -92,13 +190,19 @@ jobs:
 
       - name: Helm template
         run: |
-          helm template test ./helm/rajeshapp
+          helm template test ./helm/rajeshapp \
+            --namespace rajeshapp
 
       - name: Install kubeconform
         run: |
-          curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-          sudo mv kubeconform /usr/local/bin/
+          curl -L \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz
+
+          sudo mv kubeconform /usr/local/bin/kubeconform
 
       - name: Kubeconform validation
         run: |
-          helm template test ./helm/rajeshapp | kubeconform --strict --summary
+          helm template test ./helm/rajeshapp \
+            --namespace rajeshapp \
+            | kubeconform --strict --summary
