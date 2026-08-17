@@ -6,15 +6,51 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
-  lint-build-scan:
+  discover:
+    name: Discover services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.find.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        name: Find service directories
+        run: |
+          services=()
+          for dir in */; do
+            dir="${dir%/}"
+            if [[ -f "$dir/Dockerfile" && -f "$dir/app.py" && -f "$dir/requirements.txt" ]]; then
+              services+=("$dir")
+            fi
+          done
+          # Ensure frontend is included even if it lacks app.py/requirements.txt
+          if [[ ! " ${services[@]} " =~ " frontend-service " ]] && [[ -d "frontend-service" ]]; then
+             services+=("frontend-service")
+          fi
+          json=$(printf '%s\n' "${services[@]}" | jq -R . | jq -sc .)
+          echo "services=$json" >> "$GITHUB_OUTPUT"
+
+  helm-validate:
+    name: Helm lint & template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint helm/rajeshapp
+      - run: helm template rajeshapp helm/rajeshapp > /dev/null
+
+  build-scan:
     name: Lint, build & scan (${{ matrix.service }})
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: [audit-service, auth-service, frontend-service, grievance-service]
-
+        service: ${{ fromJson(needs.discover.outputs.services) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,15 +59,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install flake8
-        run: pip install flake8
-
+      - run: pip install flake8
       - name: Lint with flake8
-        run: |
-          flake8 ${{ matrix.service }} --max-line-length=120 --extend-ignore=E302,E127 || true
+        run: flake8 ${{ matrix.service }} --max-line-length=120 --extend-ignore=E302,E127 || true
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
       - name: Build image
         uses: docker/build-push-action@v6
@@ -40,3 +72,35 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
           push: false
           load: true
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push image
+        if: github.event_name == 'push'
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
+
+  publish-meta:
+    name: Publish image tag artifact
+    if: github.event_name == 'push'
+    needs: [build-scan, helm-validate]
+    runs-on: ubuntu-latest
+    steps:
+      - run: mkdir -p meta && echo "${{ github.sha }}" > meta/image-tag.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-meta
+          path: meta/image-tag.txt
+          retention-days: 1
