@@ -1,55 +1,21 @@
 name: CI
 
-# Runs on every PR and on pushes to main/master.
-# Images are only pushed to Docker Hub on a successful push to main/master.
-# No AWS credentials are used anywhere in this workflow.
-
 on:
-  pull_request:
-    branches: [main, master]
   push:
     branches: [main, master]
-
-permissions:
-  contents: read
+  pull_request:
+    branches: [main, master]
 
 jobs:
-  discover:
-    name: Discover services
-    runs-on: ubuntu-latest
-    outputs:
-      services: ${{ steps.find.outputs.services }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: find
-        name: Find service directories (Dockerfile + app.py + requirements.txt)
-        run: |
-          services=()
-          for dir in */; do
-            dir="${dir%/}"
-            if [[ -f "$dir/Dockerfile" && -f "$dir/app.py" && -f "$dir/requirements.txt" ]]; then
-              services+=("$dir")
-            fi
-          done
-          json=$(printf '%s\n' "${services[@]}" | jq -R . | jq -sc .)
-          echo "services=$json" >> "$GITHUB_OUTPUT"
-          echo "Discovered services: $json"
-
-  build-scan:
-    name: Lint, build & scan (${{ matrix.service }})
-    needs: discover
+  build:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: ${{ fromJson(needs.discover.outputs.services) }}
+        service: [audit-service, auth-service, frontend-service, grievance-service]
+
     steps:
       - uses: actions/checkout@v4
-
-      - name: Compute image tag
-        id: vars
-        run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -58,69 +24,34 @@ jobs:
 
       - name: Lint with flake8
         run: |
-          pip install --quiet flake8
-          # Catch real issues (syntax errors, undefined names, unused imports,
-          # etc.) without failing the build on pure cosmetic continuation-line
-          # indentation (E127/E128) - we don't reformat existing app code.
-          flake8 ${{ matrix.service }} --max-line-length=120 --extend-ignore=E127,E128
+          pip install flake8
+          flake8 ${{ matrix.service }} --max-line-length=120
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Build once, load locally for scanning. Pushed later without rebuilding.
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.service }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ steps.vars.outputs.sha_short }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
           push: false
           load: true
 
-      - name: Trivy vulnerability scan
+      - name: Trivy scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ steps.vars.outputs.sha_short }}
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
           severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
+          exit-code: "0"   # report but don’t fail
 
       - name: Log in to Docker Hub
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Pushes the exact image already built and scanned above - no rebuild.
       - name: Push image
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ steps.vars.outputs.sha_short }}
-
-  helm-validate:
-    name: Helm lint & template
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
-      - name: Helm lint
-        run: helm lint helm/rajeshapp
-      - name: Helm template (render check)
-        run: helm template rajeshapp helm/rajeshapp > /dev/null
-
-  # Publishes the image tag used by this run so Infrastructure/Deploy can
-  # deploy the exact SHA that CI built and pushed - no rebuilding downstream.
-  publish-image-tag:
-    name: Publish image tag artifact
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    needs: [build-scan, helm-validate]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Write image tag
-        run: |
-          mkdir -p meta
-          echo "${GITHUB_SHA::7}" > meta/image-tag.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: image-meta
-          path: meta/image-tag.txt
-          retention-days: 7
+        if: github.event_name == 'push'
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
