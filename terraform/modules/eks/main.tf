@@ -5,9 +5,9 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.33"
 
-  vpc_id                    = aws_vpc.main.id
-  subnet_ids                = aws_subnet.public[*].id   # nodes go here — no NAT needed
-  control_plane_subnet_ids  = aws_subnet.public[*].id
+  vpc_id                    = var.vpc_id
+  subnet_ids                = var.public_subnet_ids   
+  control_plane_subnet_ids  = var.public_subnet_ids
 
   cluster_endpoint_public_access = true
 
@@ -36,7 +36,7 @@ module "eks" {
       max_size     = 1
       desired_size = 1
 
-      subnet_ids = aws_subnet.public[*].id
+      subnet_ids = var.public_subnet_ids
 
       disk_size = 20   # smaller root volume than module default, gp3
 
