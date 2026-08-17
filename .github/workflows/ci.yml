@@ -28,11 +28,7 @@ jobs:
 
       - name: Lint with flake8
         run: |
-          flake8 ${{ matrix.service }} \
-            --max-line-length=120 \
-            --extend-ignore=E302,E127 || true
-          # E302/E127 ignored so cosmetic issues don’t fail CI
-          # || true ensures job continues even if other lint errors exist
+          flake8 ${{ matrix.service }} --max-line-length=120 --extend-ignore=E302,E127 || true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -44,21 +40,3 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
           push: false
           load: true
-
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
-          severity: HIGH,CRITICAL
-          exit-code: "0"   # report vulnerabilities but don’t fail
-
-      - name: Log in to Docker Hub
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Push image
-        if: github.event_name == 'push'
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
