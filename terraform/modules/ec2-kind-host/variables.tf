@@ -16,7 +16,7 @@ variable "key_name" {
 variable "instance_type" {
   description = "EC2 instance type. Restricted to the org's allowed list."
   type        = string
-  default     = "t3.micro"
+  default     = "t3.small"
 
   validation {
     condition = contains([
