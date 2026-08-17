@@ -1,14 +1,14 @@
 # =====================================================================
 # auth-service/requirements.txt — pinned for reproducible container builds
 # =====================================================================
-Flask==2.3.2
-gunicorn==21.2.0
-pymongo==4.5.0
-Werkzeug==2.3.7
+Flask==3.0.3
+gunicorn==23.0.0
+pymongo==4.8.0
+Werkzeug==3.0.4
 # PyJWT: signs the JWT on login and would decode it if this service ever
 # needed to verify its own tokens (it also backs /api/verify).
-PyJWT==2.8.0
+PyJWT==2.13.0
 # requests: used for the fire-and-forget HTTP call to audit-service
 # (auth-service -> audit-service) every time someone registers/logs in.
-requests==2.31.0
-python-dotenv==1.0.0
+requests==2.32.3
+python-dotenv==1.0.1

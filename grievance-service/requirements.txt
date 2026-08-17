@@ -1,12 +1,12 @@
 # =====================================================================
 # grievance-service/requirements.txt — pinned for reproducible container builds
 # =====================================================================
-Flask==2.3.2
-gunicorn==21.2.0
-pymongo==4.5.0
+Flask==3.0.3
+gunicorn==23.0.0
+pymongo==4.8.0
 # PyJWT: verifies the JWT issued by auth-service LOCALLY (same
 # JWT_SECRET, no network call back to auth-service per request).
-PyJWT==2.8.0
+PyJWT==2.13.0
 # requests: fire-and-forget call to audit-service on every write.
-requests==2.31.0
-python-dotenv==1.0.0
+requests==2.32.3
+python-dotenv==1.0.1
