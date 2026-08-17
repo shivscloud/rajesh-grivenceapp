@@ -1,4 +1,4 @@
-name: Infrastructure (Lint but no fail)
+name: Infrastructure (Lint but no fail to find)
 
 on:
   # Direct trigger: when you edit this workflow file itself v
