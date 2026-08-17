@@ -1,12 +1,11 @@
 name: Infrastructure (Lint but no fail)
 
 on:
-  # ✅ Direct trigger: when you edit this workflow file itself
+  # Direct trigger: when you edit this workflow file itself v
   pull_request:
     branches: [main, master]
     paths-ignore:
       - '.github/workflows/infrastructure.yml'    
-
   push:
     branches:
       - main
@@ -21,7 +20,6 @@ on:
     types:
       - completed
     branches:
-      - main
       - master
     
 
@@ -36,7 +34,7 @@ env:
 
 jobs:
   # ------------------------------------------------
-  # Decide if we should proceed
+  # Decide if we should proceed to go
   # ------------------------------------------------
   check-ci:
     name: Check CI status or direct push
