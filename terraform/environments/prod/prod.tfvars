@@ -6,7 +6,7 @@ environment  = "prod"
 project_name = "rajesh-grievanceapp"
 
 # EC2 Configuration (REQUIRED - update these)
-key_name           = "rajesh-grievanceapp-prod-key"  # Auto-created by workflow if missing
+key_name           = "rajesh-app-prod-key"  # Auto-created by workflow if missing
 allowed_ssh_cidr   = "0.0.0.0/0"                # TODO: restrict to your IP
 allowed_app_cidr   = "0.0.0.0/0"               # Or restrict to specific IPs
 
