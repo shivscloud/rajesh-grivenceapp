@@ -126,6 +126,21 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # ------------------------------------------------
+      # Auto-create EC2 key pair if missing (idempotent)
+      # Extracts key_name from prod.tfvars
+      # ------------------------------------------------
+      - name: Ensure EC2 key pair exists
+        run: |
+          KEY_NAME=$(grep '^key_name' ${{ env.WORKING_DIR }}/prod.tfvars | cut -d'"' -f2)
+          if aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Key pair $KEY_NAME already exists — skipping creation."
+          else
+            echo "Creating key pair $KEY_NAME..."
+            aws ec2 create-key-pair --key-name "$KEY_NAME" --region ${{ env.AWS_REGION }} --query 'KeyMaterial' --output text > /tmp/$KEY_NAME.pem
+            echo "Key pair created. Private key saved to /tmp/$KEY_NAME.pem (download from workflow artifacts if needed)."
+          fi
+
+      # ------------------------------------------------
       # Prerequisite: ensure the Terraform state bucket
       # exists before `terraform init` runs. Idempotent —
       # skips creation if the bucket is already there.
