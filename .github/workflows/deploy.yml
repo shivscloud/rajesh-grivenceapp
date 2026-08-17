@@ -79,6 +79,11 @@ jobs:
 
             IMAGE_TAG=${{ github.event.inputs.image_tag || env.IMAGE_TAG }}
 
+            # Ensure kind cluster exists
+            if ! kind get clusters | grep -q "rajesh-kind"; then
+              kind create cluster --name rajesh-kind
+            fi
+
             # Pull latest images
             for svc in auth-service grievance-service audit-service frontend-service; do
               docker pull ${{ secrets.DOCKERHUB_USERNAME }}/$svc:$IMAGE_TAG
