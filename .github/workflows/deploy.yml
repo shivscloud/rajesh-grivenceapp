@@ -21,6 +21,7 @@ env:
   IMAGE_TAG: latest
 
 jobs:
+
   deploy:
     runs-on: ubuntu-latest
     environment: production
@@ -31,17 +32,20 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
+      # ==================================================
       # 1. Checkout repository
-      # --------------------------------------------------
+      # ==================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
 
-      # --------------------------------------------------
-      # 2. Configure AWS
-      # --------------------------------------------------
+
+      # ==================================================
+      # 2. Configure AWS credentials
+      # ==================================================
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -49,13 +53,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # --------------------------------------------------
+
+      # ==================================================
       # 3. Find running EC2
-      # --------------------------------------------------
+      # ==================================================
+
       - name: Get EC2 public IP
         id: ec2
         shell: bash
         run: |
+
+          set -e
+
+          echo "===================================="
+          echo "Finding EC2 instance"
+          echo "===================================="
 
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters \
@@ -81,24 +93,36 @@ jobs:
 
           echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
 
-          echo "EC2 Instance: $INSTANCE_ID"
+          echo "EC2 Instance : $INSTANCE_ID"
           echo "EC2 Public IP: $PUBLIC_IP"
 
-      # --------------------------------------------------
+
+      # ==================================================
       # 4. Setup SSH key
-      # --------------------------------------------------
+      # ==================================================
+
       - name: Setup SSH key
         run: |
+
+          set -e
+
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > /tmp/ec2_key.pem
+
           chmod 600 /tmp/ec2_key.pem
 
-      # --------------------------------------------------
+          echo "SSH key configured"
+
+
+      # ==================================================
       # 5. Prepare EC2
-      # --------------------------------------------------
+      # ==================================================
+
       - name: Prepare EC2
         run: |
 
-          ssh -o StrictHostKeyChecking=no \
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
             -i /tmp/ec2_key.pem \
             ubuntu@${{ steps.ec2.outputs.public_ip }} << 'EOF'
 
@@ -108,49 +132,95 @@ jobs:
             echo "Preparing EC2"
             echo "===================================="
 
+            # ------------------------------------------
             # Application directory
-            sudo mkdir -p /opt/rajesh-grievanceapp
-            sudo chown -R ubuntu:ubuntu /opt/rajesh-grievanceapp
+            # ------------------------------------------
 
-            # Verify required tools
+            sudo mkdir -p /opt/rajesh-grievanceapp
+
+            sudo chown -R ubuntu:ubuntu \
+              /opt/rajesh-grievanceapp
+
+
+            # ------------------------------------------
+            # Verify Docker
+            # ------------------------------------------
+
+            echo ""
             echo "Docker:"
             docker --version
 
+
+            # ------------------------------------------
+            # Verify Kind
+            # ------------------------------------------
+
+            echo ""
             echo "Kind:"
             kind --version
 
+
+            # ------------------------------------------
+            # Verify kubectl
+            # ------------------------------------------
+
+            echo ""
             echo "Kubectl:"
             kubectl version --client
 
+
+            # ------------------------------------------
+            # Verify Helm
+            # ------------------------------------------
+
+            echo ""
             echo "Helm:"
             helm version
 
+
+            echo ""
             echo "===================================="
             echo "EC2 ready"
             echo "===================================="
 
           EOF
 
-      # --------------------------------------------------
-      # 6. Copy Helm chart to EC2
-      # --------------------------------------------------
+
+      # ==================================================
+      # 6. Copy Helm chart
+      # ==================================================
+
       - name: Copy Helm chart to EC2
         run: |
 
-          scp -o StrictHostKeyChecking=no \
+          set -e
+
+          echo "Copying Helm chart..."
+
+          scp \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
             -i /tmp/ec2_key.pem \
             -r ./helm/rajeshapp \
             ubuntu@${{ steps.ec2.outputs.public_ip }}:/opt/rajesh-grievanceapp/
 
-      # --------------------------------------------------
-      # 7. Deploy application
-      # --------------------------------------------------
+          echo "Helm chart copied successfully"
+
+
+      # ==================================================
+      # 7. Deploy application to Kind
+      # ==================================================
+
       - name: Deploy to EC2 Kind
         run: |
 
+          set -e
+
           IMAGE_TAG="${{ github.event.inputs.image_tag || env.IMAGE_TAG }}"
 
-          ssh -o StrictHostKeyChecking=no \
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
             -i /tmp/ec2_key.pem \
             ubuntu@${{ steps.ec2.outputs.public_ip }} << EOF
 
@@ -161,39 +231,117 @@ jobs:
 
             echo "===================================="
             echo "Deployment"
-            echo "Image tag: \$IMAGE_TAG"
-            echo "Docker user: \$DOCKER_USER"
             echo "===================================="
 
-            # --------------------------------------------
+            echo "Image tag : \$IMAGE_TAG"
+            echo "Docker user: \$DOCKER_USER"
+
+            echo "===================================="
+
+
+            # ==================================================
             # Ensure Kind cluster
-            # --------------------------------------------
+            # ==================================================
 
             if ! kind get clusters | grep -q "^rajesh-kind\$"; then
 
+              echo ""
               echo "Creating Kind cluster..."
+              echo ""
+
+              cat > /tmp/kind-config.yaml << 'KIND_EOF'
+
+kind: Cluster
+
+apiVersion: kind.x-k8s.io/v1alpha4
+
+nodes:
+
+  - role: control-plane
+
+    extraPortMappings:
+
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+
+KIND_EOF
+
+              echo "Kind configuration:"
+              cat /tmp/kind-config.yaml
+
+              echo ""
+              echo "Creating cluster..."
 
               kind create cluster \
-                --name rajesh-kind
+                --name rajesh-kind \
+                --config /tmp/kind-config.yaml
 
             else
 
+              echo ""
               echo "Kind cluster already exists"
 
             fi
 
-            # --------------------------------------------
+
+            # ==================================================
+            # Verify Kind cluster
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Kind clusters"
+            echo "===================================="
+
+            kind get clusters
+
+
+            # ==================================================
+            # Verify Docker port mapping
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Docker port mapping"
+            echo "===================================="
+
+            docker ps \
+              --format 'table {{.Names}}\t{{.Ports}}'
+
+
+            # ==================================================
+            # Verify Kubernetes node
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Kubernetes nodes"
+            echo "===================================="
+
+            kubectl get nodes -o wide
+
+
+            # ==================================================
             # Docker Hub login
-            # --------------------------------------------
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Docker Hub login"
+            echo "===================================="
 
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
               docker login \
                 -u "\$DOCKER_USER" \
                 --password-stdin
 
-            # --------------------------------------------
-            # Pull and load images
-            # --------------------------------------------
+            echo "Docker Hub login successful"
+
+
+            # ==================================================
+            # Pull and load application images
+            # ==================================================
 
             for svc in \
               auth-service \
@@ -202,24 +350,47 @@ jobs:
               frontend-service
             do
 
+              echo ""
               echo "------------------------------------"
               echo "Deploying \$svc"
               echo "------------------------------------"
 
-              docker pull \
-                "\$DOCKER_USER/\$svc:\$IMAGE_TAG"
+              IMAGE="\$DOCKER_USER/\$svc:\$IMAGE_TAG"
+
+              echo "Image: \$IMAGE"
+
+
+              # ------------------------------------------
+              # Pull image from Docker Hub
+              # ------------------------------------------
+
+              docker pull "\$IMAGE"
+
+
+              # ------------------------------------------
+              # Load image into Kind
+              # ------------------------------------------
 
               kind load docker-image \
-                "\$DOCKER_USER/\$svc:\$IMAGE_TAG" \
+                "\$IMAGE" \
                 --name rajesh-kind
+
+              echo "Image loaded into Kind"
 
             done
 
-            # --------------------------------------------
+
+            # ==================================================
             # Helm deployment
-            # --------------------------------------------
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Helm deployment"
+            echo "===================================="
 
             cd /opt/rajesh-grievanceapp
+
 
             helm upgrade --install rajeshapp \
               ./rajeshapp \
@@ -232,25 +403,111 @@ jobs:
               --wait \
               --timeout=10m
 
+
+            echo ""
             echo "===================================="
             echo "Helm deployment completed"
             echo "===================================="
 
+
+            # ==================================================
+            # Show pods
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Pods"
+            echo "===================================="
+
+            kubectl get pods \
+              -n rajesh \
+              -o wide
+
+
+            # ==================================================
+            # Show services
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Services"
+            echo "===================================="
+
+            kubectl get svc \
+              -n rajesh
+
+
+            # ==================================================
+            # Test frontend from EC2
+            # ==================================================
+
+            echo ""
+            echo "===================================="
+            echo "Testing frontend"
+            echo "===================================="
+
+            sleep 5
+
+            if curl \
+              --connect-timeout 10 \
+              --max-time 30 \
+              -f \
+              http://localhost:30080
+            then
+
+              echo ""
+              echo "===================================="
+              echo "✅ Frontend accessible on port 30080"
+              echo "===================================="
+
+            else
+
+              echo ""
+              echo "===================================="
+              echo "❌ Frontend is NOT accessible"
+              echo "===================================="
+
+              echo ""
+              echo "Docker ports:"
+              docker ps \
+                --format 'table {{.Names}}\t{{.Ports}}'
+
+              echo ""
+              echo "Kubernetes services:"
+              kubectl get svc -n rajesh
+
+              echo ""
+              echo "Kubernetes endpoints:"
+              kubectl get endpoints -n rajesh
+
+              exit 1
+
+            fi
+
           EOF
 
-      # --------------------------------------------------
-      # 8. Verify
-      # --------------------------------------------------
+
+      # ==================================================
+      # 8. Verify deployment
+      # ==================================================
+
       - name: Verify deployment
         run: |
 
-          ssh -o StrictHostKeyChecking=no \
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
             -i /tmp/ec2_key.pem \
             ubuntu@${{ steps.ec2.outputs.public_ip }} << 'EOF'
 
             set -e
 
             echo "===================================="
+            echo "FINAL DEPLOYMENT VERIFICATION"
+            echo "===================================="
+
+
+            echo ""
             echo "PODS"
             echo "===================================="
 
@@ -258,33 +515,86 @@ jobs:
               -n rajesh \
               -o wide
 
-            echo "===================================="
+
+            echo ""
             echo "SERVICES"
             echo "===================================="
 
             kubectl get svc \
               -n rajesh
 
-            echo "===================================="
+
+            echo ""
             echo "DEPLOYMENTS"
             echo "===================================="
 
             kubectl get deployments \
               -n rajesh
 
+
+            echo ""
+            echo "STATEFULSETS"
             echo "===================================="
+
+            kubectl get statefulsets \
+              -n rajesh
+
+
+            echo ""
+            echo "HPA"
+            echo "===================================="
+
+            kubectl get hpa \
+              -n rajesh \
+              || true
+
+
+            echo ""
             echo "HELM"
             echo "===================================="
 
             helm list \
               -n rajesh
 
+
+            echo ""
+            echo "PORT MAPPING"
+            echo "===================================="
+
+            docker ps \
+              --format 'table {{.Names}}\t{{.Ports}}'
+
+
+            echo ""
+            echo "===================================="
+            echo "APPLICATION URL"
+            echo "===================================="
+
+            PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+
+            if [ -n "\$PUBLIC_IP" ]; then
+              echo "http://\$PUBLIC_IP:30080"
+            else
+              echo "http://<EC2-PUBLIC-IP>:30080"
+            fi
+
+
+            echo ""
+            echo "===================================="
+            echo "✅ DEPLOYMENT VERIFICATION COMPLETE"
+            echo "===================================="
+
           EOF
 
-      # --------------------------------------------------
-      # 9. Cleanup
-      # --------------------------------------------------
+
+      # ==================================================
+      # 9. Cleanup SSH key
+      # ==================================================
+
       - name: Cleanup SSH key
         if: always()
         run: |
+
           rm -f /tmp/ec2_key.pem
+
+          echo "SSH key cleaned up"
